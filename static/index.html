@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Билайн Бизнес — Диспетчер полевых инженеров</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="header">
+            <div class="logo">ББ</div>
+            <div class="company-name">Билайн Бизнес</div>
+            <div class="user-info">Диспетчер<br>полевых инженеров</div>
+        </div>
+
+        <div class="controls">
+            <div class="form-group">
+                <label class="form-label">Регион</label>
+                <select class="form-select" id="region" onchange="onRegionChange()"></select>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Алгоритм</label>
+                    <select class="form-select" id="mode" onchange="onSettingsChange()">
+                        <option value="improved">Улучшенный</option>
+                        <option value="baseline_fifo">Базовый (FIFO)</option>
+                        <option value="benchmark_ortools">OR-Tools*</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Дистанция</label>
+                    <select class="form-select" id="dist" onchange="onSettingsChange()">
+                        <option value="haversine">По прямой</option>
+                        <option value="osrm">По дорогам</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <nav class="menu">
+            <div class="menu-item active" onclick="switchSection('routes', this)"><svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/><circle cx="18" cy="12" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg><span class="menu-text">Маршруты</span></div>
+            <div class="menu-item" onclick="switchSection('requests', this)"><svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span class="menu-text">Заявки</span></div>
+            <div class="menu-item" onclick="switchSection('engineers', this)"><svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span class="menu-text">Инженеры</span></div>
+            <div class="menu-item" onclick="switchSection('metrics', this)"><svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/></svg><span class="menu-text">Метрики</span></div>
+            <div class="menu-item" onclick="switchSection('scenarios', this)"><svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg><span class="menu-text">Сценарии</span></div>
+        </nav>
+
+        <!-- Dynamic Panel -->
+        <div class="dynamic-panel" id="dynamicPanel"></div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main-content">
+        <div class="top-bar">
+            <h1 class="page-title" id="pageTitle">Маршруты</h1>
+            <div class="action-buttons">
+                <button class="btn btn-secondary" onclick="switchSection('metrics', null)"><span>📊</span> Сравнить</button>
+                <button class="btn btn-primary" onclick="loadPlan()"><span>⚡</span> Рассчитать план</button>
+            </div>
+        </div>
+
+        <div class="content-area">
+
+            <!-- Routes -->
+            <div class="section-content active" id="section-routes">
+                <div class="stats-row">
+                    <div class="stat-card"><div class="stat-card-icon">🗂</div><div class="stat-card-value" id="statAssigned">–</div><div class="stat-card-label">Назначено заявок</div></div>
+                    <div class="stat-card"><div class="stat-card-icon">👷</div><div class="stat-card-value" id="statEngineers">–</div><div class="stat-card-label">Инженеров в рейсе</div></div>
+                    <div class="stat-card"><div class="stat-card-icon">📏</div><div class="stat-card-value" id="statKm">–</div><div class="stat-card-label">Общий пробег (км)</div></div>
+                    <div class="stat-card"><div class="stat-card-icon">⏱</div><div class="stat-card-value" id="statMinutes">–</div><div class="stat-card-label">Время работ (мин)</div></div>
+                    <div class="stat-card"><div class="stat-card-icon">⚠️</div><div class="stat-card-value" id="statUnassigned">–</div><div class="stat-card-label">Неназначено</div></div>
+                </div>
+                <div class="map-container">
+                    <div id="mainMap"></div>
+                    <div class="map-hint" id="mapHint">Кликните на заявку в списке, чтобы показать на карте</div>
+                </div>
+            </div>
+
+            <!-- Requests -->
+            <div class="section-content" id="section-requests">
+                <div class="search-row">
+                    <input type="text" class="search-box" id="reqSearch" placeholder="🔍 Поиск заявки..." oninput="renderRequests()">
+                    <span class="search-hint">Вся заявка = отдельный выезд инженера</span>
+                </div>
+                <div class="list-wrap" id="requestsList"></div>
+            </div>
+
+            <!-- Engineers -->
+            <div class="section-content" id="section-engineers">
+                <div class="list-wrap" id="engineersList"></div>
+            </div>
+
+            <!-- Metrics -->
+            <div class="section-content" id="section-metrics">
+                <div class="metrics-compare" id="metricsCompare"></div>
+                <div class="metrics-note">
+                    Критерии: <b>1)</b> больше выполненных заявок → <b>2)</b> меньше задействованных
+                    инженеров → <b>3)</b> оптимальность маршрутов (пробег). Контрольное
+                    распределение приводится справочно (не является эталоном совпадения).
+                </div>
+            </div>
+
+            <!-- Scenarios -->
+            <div class="section-content" id="section-scenarios">
+                <div class="scenario-cards">
+                    <div class="scenario-card">
+                        <div class="scenario-title">🚨 Срочная аварийная заявка</div>
+                        <div class="scenario-desc">Поступает внепланово, выполняется как можно раньше, может вытеснить обычные заявки.</div>
+                        <button class="btn btn-primary" onclick="runScenario('urgent')">Создать и перепланировать</button>
+                    </div>
+                    <div class="scenario-card">
+                        <div class="scenario-title">✕ Отмена заявки</div>
+                        <div class="scenario-desc">Клиент отменил — заявка уходит из плана.</div>
+                        <div class="form-group"><select class="form-select" id="cancelReq"></select></div>
+                        <button class="btn btn-secondary" onclick="runScenario('cancel')">Перепланировать</button>
+                    </div>
+                    <div class="scenario-card">
+                        <div class="scenario-title">🔴 Инженер недоступен</div>
+                        <div class="scenario-desc">Диспетчер помечает инженера недоступным — его заявки перераспределяются.</div>
+                        <div class="form-group"><select class="form-select" id="unavailEng"></select></div>
+                        <button class="btn btn-secondary" onclick="runScenario('unavailable')">Перепланировать</button>
+                    </div>
+                </div>
+                <div class="scenario-result" id="scenarioResult"></div>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# Runtime data (generated/cached, not source)
+data/app.db
+data/geocode_cache.json
+data/osrm_cache.json
+data/parsed/
+data/*.tmp
+
+# OS / editor
+Thumbs.db
+.DS_Store
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/

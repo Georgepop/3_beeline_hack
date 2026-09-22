@@ -1,0 +1,28 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATA_SOURCE=csv
+      - DATABASE_URL=sqlite:///./data/app.db
+      # Postgres (закомментировано для локального демо — раскомментируйте и поднимите db):
+      # - DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/app
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # База данных сообщений/настроек (опция; SQLite по умолчанию покрывает демо).
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: app
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #
+  # volumes:
+  #   pgdata:

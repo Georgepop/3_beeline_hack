@@ -1,0 +1,107 @@
+"""API HTTP-слой (FastAPI). Контракт из app/schemas.py."""
+
+from pathlib import Path
+
+from fastapi import Body, FastAPI, HTTPException, Query
+
+from app import mock
+from app import planner
+from app.config import get_settings
+from app.regions import REGIONS
+from app.schemas import (
+    DistMode,
+    Engineer,
+    PlanResponse,
+    RegionId,
+    RegionMeta,
+    Request,
+    ScenarioEvent,
+    ScenarioResult,
+    SettingsIn,
+    SettingsOut,
+    SolverMode,
+)
+
+# Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
+_runtime = SettingsOut()
+
+
+def _settings() -> SettingsOut:
+    return _runtime
+
+
+def _region_box(region: str) -> RegionMeta:
+    ds = get_settings().data_source
+    if ds in ("csv", "db"):
+        from app.data_source import load_region
+        from app.schemas import LatLng
+
+        r = load_region(region)
+        return RegionMeta(
+            id=region,
+            name=r["region_name"],
+            office_address=r["office_address"],
+            office=LatLng(**r["office"]),
+            requests=len(r["requests"]),
+            engineers=len(r["engineers"]),
+        )
+    meta = next(m for m in mock.list_regions() if m.id == region)
+    return meta
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    app = FastAPI(title=settings.app_name, version="0.1.0")
+
+    @app.get("/api/health")
+    def health():
+        return {"status": "ok", "app": settings.app_name}
+
+    @app.get("/api/regions", response_model=list[RegionMeta])
+    def regions():
+        return [_region_box(r) for r in REGIONS]
+
+    @app.get("/api/requests", response_model=list[Request])
+    def requests(region: RegionId = Query(default=_settings().region)):
+        reqs, _ = planner.dataset(region)
+        return reqs
+
+    @app.get("/api/engineers", response_model=list[Engineer])
+    def engineers(region: RegionId = Query(default=_settings().region)):
+        _, engs = planner.dataset(region)
+        return engs
+
+    @app.post("/api/plan", response_model=PlanResponse)
+    def plan(region: RegionId = Query(default=_settings().region),
+             mode: SolverMode = Query(default=_settings().solver_mode),
+             dist: DistMode = Query(default=_settings().dist_mode)):
+        eff_mode = mode if mode != "benchmark_ortools" else "improved"  # бенчмарк не установлен
+        return planner.solve(region, eff_mode, dist)
+
+    @app.post("/api/scenario", response_model=ScenarioResult)
+    def scenario(ev: ScenarioEvent = Body(...),
+                 region: RegionId = Query(default=_settings().region)):
+        try:
+            return planner.replay(region, ev)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/settings", response_model=SettingsOut)
+    def get_settings_api():
+        return _settings()
+
+    @app.post("/api/settings", response_model=SettingsOut)
+    def set_settings_api(body: SettingsIn):
+        upd = body.model_dump(exclude_none=True)
+        for k, v in upd.items():
+            setattr(_runtime, k, v)
+        return _settings()
+
+    # Статика
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    if static_dir.exists():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+
+    return app

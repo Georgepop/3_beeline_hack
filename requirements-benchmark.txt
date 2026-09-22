@@ -1,0 +1,3 @@
+# Опциональные зависимости для бенчмарка (не входят в основной образ).
+# Установка: pip install -r requirements-benchmark.txt
+ortools>=9.8
