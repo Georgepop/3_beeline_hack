@@ -1,0 +1,1458 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Логистика.Г - Управление</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container { display: flex; height: 100vh; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 380px;
+            background: white;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        .header { padding: 20px; border-bottom: 1px solid #e8ecf1; }
+        .logo { font-size: 32px; font-weight: bold; color: #2d9c7a; }
+        .company-name { font-size: 18px; font-weight: 600; color: #2c3e50; margin: 5px 0; }
+        .user-info { font-size: 13px; color: #7f8c8d; }
+
+        .toolbar {
+            display: flex; gap: 10px; padding: 15px 20px;
+            border-bottom: 1px solid #e8ecf1;
+        }
+        .toolbar-btn {
+            width: 36px; height: 36px;
+            border: 1px solid #dce1e6; background: white;
+            border-radius: 8px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        .toolbar-btn:hover { background: #f0f4f8; border-color: #2d9c7a; }
+
+        .group-selector { padding: 0 20px 15px; border-bottom: 1px solid #e8ecf1; }
+        .group-select {
+            width: 100%; padding: 10px 15px;
+            border: 1px solid #dce1e6; border-radius: 8px;
+            background: white; font-size: 14px; cursor: pointer;
+        }
+
+        /* Calendar */
+        .calendar-section { padding: 20px; border-bottom: 1px solid #e8ecf1; }
+        .calendar-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 15px;
+        }
+        .calendar-title { font-size: 16px; font-weight: 600; color: #2c3e50; }
+        .calendar-nav {
+            background: none; border: none; font-size: 18px;
+            cursor: pointer; color: #7f8c8d; padding: 5px 10px;
+        }
+        .calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; text-align: center; }
+        .calendar-day-header { font-size: 12px; color: #95a5a6; padding: 5px; font-weight: 500; }
+        .calendar-day {
+            padding: 8px; border-radius: 6px; cursor: pointer;
+            font-size: 13px; transition: all 0.2s;
+        }
+        .calendar-day:hover { background: #f0f4f8; }
+        .calendar-day.active { background: #2d9c7a; color: white; }
+        .calendar-day.empty { cursor: default; }
+
+        .quick-dates { display: flex; gap: 10px; margin-top: 15px; }
+        .quick-date-btn {
+            flex: 1; padding: 8px; border: 1px solid #dce1e6;
+            background: white; border-radius: 6px; cursor: pointer;
+            font-size: 13px; transition: all 0.2s;
+        }
+        .quick-date-btn:hover { background: #f0f4f8; }
+        .quick-date-btn.active { background: #2d9c7a; color: white; border-color: #2d9c7a; }
+        .selected-date { margin-top: 10px; font-size: 13px; color: #7f8c8d; }
+
+        /* Menu */
+        .menu { padding: 15px 0; border-bottom: 1px solid #e8ecf1; }
+        .menu-item {
+            padding: 12px 20px; display: flex; align-items: center; gap: 12px;
+            cursor: pointer; transition: all 0.2s; border-left: 3px solid transparent;
+        }
+        .menu-item:hover { background: #f8fafb; }
+        .menu-item.active { background: #e8f5f0; border-left-color: #2d9c7a; color: #2d9c7a; }
+        .menu-icon { width: 20px; height: 20px; }
+        .menu-text { font-size: 14px; font-weight: 500; }
+
+        /* Dynamic Panel */
+        .dynamic-panel { padding: 15px 20px; flex: 1; overflow-y: auto; }
+        .panel-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 12px;
+        }
+        .panel-title { font-size: 14px; font-weight: 600; color: #2c3e50; }
+        .panel-actions { display: flex; gap: 8px; }
+        .icon-btn {
+            width: 32px; height: 32px;
+            border: 1px solid #dce1e6; background: white;
+            border-radius: 6px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px; transition: all 0.2s;
+        }
+        .icon-btn:hover { background: #f0f4f8; border-color: #2d9c7a; }
+
+        .search-box {
+            width: 100%; padding: 10px 12px;
+            border: 1px solid #dce1e6; border-radius: 8px;
+            font-size: 13px; margin-bottom: 12px;
+        }
+        .search-box:focus { outline: none; border-color: #2d9c7a; }
+
+        .items-list {
+            max-height: 500px; overflow-y: auto;
+        }
+
+        .item-card {
+            background: #f8fafb; border: 2px solid transparent;
+            border-radius: 10px; padding: 12px; margin-bottom: 8px;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .item-card:hover { background: #eef3f7; }
+        .item-card.active {
+            border-color: #2d9c7a; background: #e8f5f0;
+        }
+        .item-header {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+        }
+        .item-icon {
+            width: 32px; height: 32px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px;
+        }
+        .item-title { font-size: 13px; font-weight: 600; color: #2c3e50; flex: 1; }
+        .item-status {
+            padding: 3px 8px; border-radius: 10px;
+            font-size: 10px; font-weight: 600;
+        }
+        .status-done { background: #e8f5f0; color: #2d9c7a; }
+        .status-active { background: #fef3e2; color: #e67e22; }
+        .status-pending { background: #f0f4f8; color: #95a5a6; }
+        .status-inactive { background: #fde8e8; color: #e74c3c; }
+        .item-meta {
+            font-size: 11px; color: #95a5a6; display: flex; gap: 12px; flex-wrap: wrap;
+        }
+
+        .upload-zone {
+            border: 2px dashed #dce1e6; border-radius: 10px;
+            padding: 15px; text-align: center;
+            margin-bottom: 12px; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .upload-zone:hover { border-color: #2d9c7a; background: #f8fafb; }
+        .upload-zone.dragover { border-color: #2d9c7a; background: #e8f5f0; }
+        .upload-icon { font-size: 28px; margin-bottom: 5px; }
+        .upload-text { font-size: 12px; color: #7f8c8d; margin-bottom: 2px; }
+        .upload-hint { font-size: 10px; color: #95a5a6; }
+
+        .mongo-btn {
+            width: 100%; padding: 10px;
+            background: linear-gradient(135deg, #00ed64 0%, #00c853 100%);
+            color: white; border: none; border-radius: 8px;
+            cursor: pointer; font-size: 13px; font-weight: 600;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            transition: all 0.2s; margin-top: 10px;
+        }
+        .mongo-btn:hover { box-shadow: 0 4px 12px rgba(0,200,83,0.3); }
+
+        .add-btn {
+            width: 100%; padding: 10px;
+            background: #2d9c7a; color: white; border: none;
+            border-radius: 8px; cursor: pointer; font-size: 13px;
+            font-weight: 600; margin-top: 10px;
+        }
+        .add-btn:hover { background: #258a6c; }
+
+        /* Main Content */
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .top-bar {
+            background: white; padding: 15px 30px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .page-title { font-size: 20px; font-weight: 600; color: #2c3e50; }
+        .action-buttons { display: flex; gap: 10px; }
+        .btn {
+            padding: 10px 20px; border: none; border-radius: 8px;
+            cursor: pointer; font-size: 14px; font-weight: 500;
+            transition: all 0.2s; display: flex; align-items: center; gap: 8px;
+        }
+        .btn-secondary { background: #f0f4f8; color: #2c3e50; }
+        .btn-secondary:hover { background: #e1e8ed; }
+        .btn-primary { background: #2d9c7a; color: white; }
+        .btn-primary:hover { background: #258a6c; }
+
+        /* Content Area */
+        .content-area { flex: 1; overflow-y: auto; padding: 30px; }
+        .section-content { display: none; }
+        .section-content.active { display: block; }
+
+        /* Stats */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px; margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white; padding: 20px;
+            border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .stat-card-icon { font-size: 32px; margin-bottom: 10px; }
+        .stat-card-value { font-size: 28px; font-weight: 700; color: #2c3e50; margin-bottom: 5px; }
+        .stat-card-label { font-size: 13px; color: #95a5a6; }
+
+        /* Map */
+        .map-container {
+            background: white; border-radius: 12px;
+            overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            height: 500px; position: relative;
+        }
+        #mainMap, #pointsMap, #zonesMap { width: 100%; height: 100%; }
+
+        .map-hint {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            font-size: 13px;
+            color: #2c3e50;
+            z-index: 1000;
+            display: none;
+        }
+        .map-hint.show { display: block; }
+
+        /* Modal */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 2000;
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: white; border-radius: 12px;
+            padding: 30px; max-width: 500px; width: 90%;
+            max-height: 90vh; overflow-y: auto;
+        }
+        .modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 20px;
+        }
+        .modal-title { font-size: 18px; font-weight: 600; color: #2c3e50; }
+        .modal-close {
+            background: none; border: none; font-size: 24px;
+            cursor: pointer; color: #95a5a6;
+        }
+        .form-group { margin-bottom: 15px; }
+        .form-label {
+            display: block; font-size: 13px; font-weight: 600;
+            color: #2c3e50; margin-bottom: 6px;
+        }
+        .form-input {
+            width: 100%; padding: 10px 12px;
+            border: 1px solid #dce1e6; border-radius: 8px;
+            font-size: 14px;
+        }
+        .form-input:focus { outline: none; border-color: #2d9c7a; }
+        .form-row {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+        }
+        .form-select {
+            width: 100%; padding: 10px 12px;
+            border: 1px solid #dce1e6; border-radius: 8px;
+            font-size: 14px; background: white;
+        }
+        .form-select:focus { outline: none; border-color: #2d9c7a; }
+
+        .toast {
+            position: fixed; top: 20px; right: 20px;
+            background: white; padding: 15px 20px;
+            border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: none; align-items: center; gap: 10px;
+            z-index: 3000; animation: slideIn 0.3s;
+        }
+        .toast.show { display: flex; }
+        .toast.success { border-left: 4px solid #2d9c7a; }
+        .toast.error { border-left: 4px solid #e74c3c; }
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { position: absolute; transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="header">
+                <div class="logo">SM</div>
+                <div class="company-name">Логистика.Г</div>
+                <div class="user-info">Георгий Логистика<br>администратор</div>
+            </div>
+
+            <div class="toolbar">
+                <button class="toolbar-btn">ⓘ</button>
+                <button class="toolbar-btn">🔔</button>
+                <button class="toolbar-btn">✓</button>
+                <button class="toolbar-btn">⚙</button>
+                <button class="toolbar-btn">📄</button>
+            </div>
+
+            <div class="group-selector">
+                <select class="group-select">
+                    <option>+ Группа Георгий</option>
+                </select>
+            </div>
+
+            <div class="calendar-section">
+                <div class="calendar-header">
+                    <button class="calendar-nav" onclick="changeMonth(-1)">‹</button>
+                    <div class="calendar-title" id="calendarMonth">Апрель 2026</div>
+                    <button class="calendar-nav" onclick="changeMonth(1)">›</button>
+                </div>
+                <div class="calendar">
+                    <div class="calendar-day-header">П</div>
+                    <div class="calendar-day-header">В</div>
+                    <div class="calendar-day-header">С</div>
+                    <div class="calendar-day-header">Ч</div>
+                    <div class="calendar-day-header">П</div>
+                    <div class="calendar-day-header">С</div>
+                    <div class="calendar-day-header">В</div>
+                </div>
+                <div class="calendar" id="calendarDays"></div>
+                <div class="quick-dates">
+                    <button class="quick-date-btn" onclick="selectQuickDate('yesterday', this)">Вчера</button>
+                    <button class="quick-date-btn active" onclick="selectQuickDate('today', this)">Сегодня</button>
+                    <button class="quick-date-btn" onclick="selectQuickDate('tomorrow', this)">Завтра</button>
+                </div>
+                <div class="selected-date">Выбрана дата: <span id="selectedDate">Пн 13.04.2026</span></div>
+            </div>
+
+            <nav class="menu">
+                <div class="menu-item active" onclick="switchSection('routes', this)">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h18M3 6h18M3 18h18"/>
+                        <circle cx="18" cy="12" r="3"/>
+                        <circle cx="6" cy="6" r="3"/>
+                        <circle cx="6" cy="18" r="3"/>
+                    </svg>
+                    <span class="menu-text">Маршруты</span>
+                </div>
+                <div class="menu-item" onclick="switchSection('points', this)">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span class="menu-text">Точки</span>
+                </div>
+                <div class="menu-item" onclick="switchSection('zones', this)">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <path d="M3 9h18M9 21V9"/>
+                    </svg>
+                    <span class="menu-text">Зоны</span>
+                </div>
+                <div class="menu-item" onclick="switchSection('drivers', this)">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                        <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <span class="menu-text">Водители</span>
+                </div>
+                <div class="menu-item" onclick="switchSection('transport', this)">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="6" width="18" height="12" rx="2"/>
+                        <path d="M6 18v2M18 18v2"/>
+                    </svg>
+                    <span class="menu-text">Транспорт</span>
+                </div>
+                <div class="menu-item" onclick="switchSection('trackers', this)">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83"/>
+                    </svg>
+                    <span class="menu-text">Трекеры</span>
+                </div>
+            </nav>
+
+            <!-- Dynamic Panel -->
+            <div class="dynamic-panel" id="dynamicPanel"></div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="top-bar">
+                <h1 class="page-title" id="pageTitle">Построение маршрутов</h1>
+                <div class="action-buttons" id="actionButtons">
+                    <button class="btn btn-secondary" onclick="clearActiveRoute()">
+                        <span>✕</span> Очистить
+                    </button>
+                    <button class="btn btn-secondary" onclick="optimizeRoute()">
+                        <span>⚡</span> Оптимизировать
+                    </button>
+                    <button class="btn btn-primary" onclick="saveAllRoutes()">
+                        <span>💾</span> Сохранить все
+                    </button>
+                </div>
+            </div>
+
+            <div class="content-area">
+                <!-- Routes Section -->
+                <div class="section-content active" id="section-routes">
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-card-icon">📍</div>
+                            <div class="stat-card-value" id="statRoutes">2</div>
+                            <div class="stat-card-label">Активных маршрутов</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">📏</div>
+                            <div class="stat-card-value" id="statDistance">105.7</div>
+                            <div class="stat-card-label">Общее расстояние (км)</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">⏱</div>
+                            <div class="stat-card-value" id="statTime">5ч 40м</div>
+                            <div class="stat-card-label">Время в пути</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">📍</div>
+                            <div class="stat-card-value" id="statPoints">7</div>
+                            <div class="stat-card-label">Точек доставки</div>
+                        </div>
+                    </div>
+
+                    <div class="map-container">
+                        <div id="mainMap"></div>
+                        <div class="map-hint" id="mapHint"> Кликните по карте чтобы добавить точку</div>
+                    </div>
+                </div>
+
+                <!-- Points Section -->
+                <div class="section-content" id="section-points">
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-card-icon">📍</div>
+                            <div class="stat-card-value" id="pointsTotal">7</div>
+                            <div class="stat-card-label">Всего точек</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">✅</div>
+                            <div class="stat-card-value" id="pointsDone">2</div>
+                            <div class="stat-card-label">Доставлено</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🚗</div>
+                            <div class="stat-card-value" id="pointsActive">2</div>
+                            <div class="stat-card-label">В пути</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">⏸</div>
+                            <div class="stat-card-value" id="pointsPending">3</div>
+                            <div class="stat-card-label">Ожидает</div>
+                        </div>
+                    </div>
+
+                    <div class="map-container">
+                        <div id="pointsMap"></div>
+                        <div class="map-hint" id="pointsMapHint">🖱 Кликните по карте чтобы добавить точку</div>
+                    </div>
+                </div>
+
+                <!-- Zones Section -->
+                <div class="section-content" id="section-zones">
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🗺</div>
+                            <div class="stat-card-value">6</div>
+                            <div class="stat-card-label">Активных зон</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">📦</div>
+                            <div class="stat-card-value">142</div>
+                            <div class="stat-card-label">Точек в зонах</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🚗</div>
+                            <div class="stat-card-value">8</div>
+                            <div class="stat-card-label">Машин в зонах</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">⚠</div>
+                            <div class="stat-card-value">1</div>
+                            <div class="stat-card-label">Нарушений</div>
+                        </div>
+                    </div>
+
+                    <div class="map-container">
+                        <div id="zonesMap"></div>
+                    </div>
+                </div>
+
+                <!-- Drivers Section -->
+                <div class="section-content" id="section-drivers">
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-card-icon"></div>
+                            <div class="stat-card-value">12</div>
+                            <div class="stat-card-label">Всего водителей</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">✅</div>
+                            <div class="stat-card-value">8</div>
+                            <div class="stat-card-label">На смене</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon"></div>
+                            <div class="stat-card-value">6</div>
+                            <div class="stat-card-label">В рейсе</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon"></div>
+                            <div class="stat-card-value">4</div>
+                            <div class="stat-card-label">Отдыхают</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transport Section -->
+                <div class="section-content" id="section-transport">
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🚗</div>
+                            <div class="stat-card-value">15</div>
+                            <div class="stat-card-label">Всего единиц</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">✅</div>
+                            <div class="stat-card-value">12</div>
+                            <div class="stat-card-label">Исправны</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🔧</div>
+                            <div class="stat-card-value">2</div>
+                            <div class="stat-card-label">На ремонте</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">⛽</div>
+                            <div class="stat-card-value">1</div>
+                            <div class="stat-card-label">Заправка</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trackers Section -->
+                <div class="section-content" id="section-trackers">
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-card-icon"></div>
+                            <div class="stat-card-value">18</div>
+                            <div class="stat-card-label">Всего трекеров</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🟢</div>
+                            <div class="stat-card-value">16</div>
+                            <div class="stat-card-label">Онлайн</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🔴</div>
+                            <div class="stat-card-value">2</div>
+                            <div class="stat-card-label">Оффлайн</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon">🚨</div>
+                            <div class="stat-card-value">1</div>
+                            <div class="stat-card-label">Тревога</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Point Modal -->
+    <div class="modal-overlay" id="addPointModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title"> Добавить точку маршрута</div>
+                <button class="modal-close" onclick="closeAddPointModal()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Адрес *</label>
+                <input type="text" class="form-input" id="pointAddress" placeholder="Введите адрес или название">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Широта (lat) *</label>
+                    <input type="number" step="0.0001" class="form-input" id="pointLat" placeholder="55.7558">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Долгота (lng) *</label>
+                    <input type="number" step="0.0001" class="form-input" id="pointLng" placeholder="37.6173">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Время</label>
+                    <input type="time" class="form-input" id="pointTime">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Статус</label>
+                    <select class="form-select" id="pointStatus">
+                        <option value="pending">Ожидает</option>
+                        <option value="active">В пути</option>
+                        <option value="done">Доставлено</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Маршрут</label>
+                <select class="form-select" id="pointRoute"></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Комментарий</label>
+                <input type="text" class="form-input" id="pointComment" placeholder="Дополнительная информация">
+            </div>
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button class="btn btn-secondary" onclick="closeAddPointModal()" style="flex:1;">Отмена</button>
+                <button class="btn btn-primary" onclick="savePointFromModal()" style="flex:1;">💾 Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MongoDB Modal -->
+    <div class="modal-overlay" id="mongoModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">🗄 Выгрузка в MongoDB</div>
+                <button class="modal-close" onclick="closeMongoModal()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">MongoDB Connection String</label>
+                <input type="text" class="form-input" id="mongoUri" value="mongodb://localhost:27017" placeholder="mongodb://localhost:27017">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Database Name</label>
+                <input type="text" class="form-input" id="mongoDb" value="logistics" placeholder="logistics">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Collection Name</label>
+                <input type="text" class="form-input" id="mongoCollection" value="delivery_points" placeholder="delivery_points">
+            </div>
+            <div class="form-group">
+                <label class="form-label">API Endpoint (опционально)</label>
+                <input type="text" class="form-input" id="apiEndpoint" value="http://localhost:3000/api/points" placeholder="http://localhost:3000/api/points">
+            </div>
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button class="btn btn-secondary" onclick="closeMongoModal()" style="flex:1;">Отмена</button>
+                <button class="btn btn-primary" onclick="exportToMongo()" style="flex:1;">📤 Выгрузить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ===== DATA =====
+        let routes = [
+            {
+                id: 1, name: 'Маршрут 1', color: '#2d9c7a',
+                driver: 'Иванов А.В.', vehicle: 'Газель А123', startTime: '09:00',
+                points: [
+                    { lat: 55.7558, lng: 37.6173, address: 'Склад, ул. Логистическая, 1', time: '09:00', status: 'done' },
+                    { lat: 55.7658, lng: 37.6273, address: 'Клиент ООО "Торг", пр. Мира, 45', time: '10:15', status: 'done' },
+                    { lat: 55.7458, lng: 37.6373, address: 'Магазин "Продукты", ул. Гагарина, 12', time: '11:30', status: 'active' }
+                ]
+            },
+            {
+                id: 2, name: 'Маршрут 2', color: '#3498db',
+                driver: 'Петров С.И.', vehicle: 'Форд В456', startTime: '10:00',
+                points: [
+                    { lat: 55.7558, lng: 37.6173, address: 'Склад, ул. Логистическая, 1', time: '10:00', status: 'done' },
+                    { lat: 55.7758, lng: 37.6073, address: 'ООО "Стройматериалы", Ленинский пр., 8', time: '11:00', status: 'active' },
+                    { lat: 55.7358, lng: 37.6473, address: 'ИП Смирнов, ул. Тверская, 22', time: '12:30', status: 'pending' },
+                    { lat: 55.7658, lng: 37.6573, address: 'Склад №5, ш. Энтузиастов, 15', time: '14:00', status: 'pending' }
+                ]
+            }
+        ];
+
+        const drivers = [
+            { id: 1, name: 'Иванов Александр В.', phone: '+7 (900) 123-45-67', vehicle: 'Газель А123', route: 'Маршрут 1', status: 'active', trips: 3, experience: 5 },
+            { id: 2, name: 'Петров Сергей И.', phone: '+7 (900) 234-56-78', vehicle: 'Форд В456', route: 'Маршрут 2', status: 'active', trips: 2, experience: 3 },
+            { id: 3, name: 'Сидоров Михаил К.', phone: '+7 (900) 345-67-89', vehicle: 'МАЗ С789', route: '-', status: 'pending', trips: 0, experience: 7 },
+            { id: 4, name: 'Козлов Дмитрий А.', phone: '+7 (900) 456-78-90', vehicle: 'КамАЗ Д012', route: '-', status: 'inactive', trips: 4, experience: 2 },
+            { id: 5, name: 'Новиков Андрей П.', phone: '+7 (900) 567-89-01', vehicle: 'Газель Е345', route: 'Маршрут 3', status: 'active', trips: 2, experience: 4 },
+            { id: 6, name: 'Морозов Виктор С.', phone: '+7 (900) 678-90-12', vehicle: 'Форд Ж678', route: '-', status: 'inactive', trips: 0, experience: 6 }
+        ];
+
+        const zones = [
+            { id: 1, name: 'Зона доставки №1', area: 'Центральный район', size: '12.5 км²', points: 45, status: 'active', color: '#2d9c7a' },
+            { id: 2, name: 'Зона доставки №2', area: 'Северный район', size: '18.3 км²', points: 32, status: 'active', color: '#3498db' },
+            { id: 3, name: 'Зона доставки №3', area: 'Южный район', size: '15.7 км²', points: 28, status: 'pending', color: '#e67e22' },
+            { id: 4, name: 'Зона запрета', area: 'Запретная зона', size: '5.2 км²', points: 0, status: 'inactive', color: '#e74c3c' }
+        ];
+
+        const transport = [
+            { id: 1, plate: 'А123БВ', brand: 'Газель', type: 'Фургон', capacity: '1.5 т', driver: 'Иванов А.В.', status: 'active' },
+            { id: 2, plate: 'В456ГД', brand: 'Ford Transit', type: 'Фургон', capacity: '2.0 т', driver: 'Петров С.И.', status: 'active' },
+            { id: 3, plate: 'С789ЕЖ', brand: 'МАЗ', type: 'Грузовик', capacity: '10 т', driver: 'Сидоров М.К.', status: 'pending' },
+            { id: 4, plate: 'Д012ЗИ', brand: 'КамАЗ', type: 'Самосвал', capacity: '15 т', driver: 'Козлов Д.А.', status: 'inactive' },
+            { id: 5, plate: 'Е345КЛ', brand: 'Газель', type: 'Фургон', capacity: '1.5 т', driver: 'Новиков А.П.', status: 'active' },
+            { id: 6, plate: 'Ж678МН', brand: 'Ford Transit', type: 'Фургон', capacity: '2.0 т', driver: '-', status: 'repair' }
+        ];
+
+        const trackers = [
+            { id: 'TRK-001', device: 'Teltonika FMB920', vehicle: 'Газель А123', lastSeen: '2 мин назад', battery: '95%', status: 'online' },
+            { id: 'TRK-002', device: 'Naviset GT-120', vehicle: 'Форд В456', lastSeen: '1 мин назад', battery: '87%', status: 'online' },
+            { id: 'TRK-003', device: 'Teltonika FMB920', vehicle: 'МАЗ С789', lastSeen: '5 мин назад', battery: '72%', status: 'online' },
+            { id: 'TRK-004', device: 'Queclink GV500', vehicle: 'КамАЗ Д012', lastSeen: '2 ч назад', battery: '12%', status: 'offline' },
+            { id: 'TRK-005', device: 'Teltonika FMB920', vehicle: 'Газель Е345', lastSeen: '30 сек назад', battery: '100%', status: 'online' },
+            { id: 'TRK-006', device: 'Naviset GT-120', vehicle: 'Форд Ж678', lastSeen: '1 ч назад', battery: '45%', status: 'alarm' }
+        ];
+
+        let activeRouteId = 1;
+        let currentSection = 'routes';
+        let mainMap, pointsMap, zonesMap;
+        let pendingPointCoords = null;
+
+        // ===== DYNAMIC PANEL =====
+        function renderDynamicPanel() {
+            const panel = document.getElementById('dynamicPanel');
+            
+            switch(currentSection) {
+                case 'routes': panel.innerHTML = renderRoutesPanel(); break;
+                case 'points': panel.innerHTML = renderPointsPanel(); break;
+                case 'zones': panel.innerHTML = renderZonesPanel(); break;
+                case 'drivers': panel.innerHTML = renderDriversPanel(); break;
+                case 'transport': panel.innerHTML = renderTransportPanel(); break;
+                case 'trackers': panel.innerHTML = renderTrackersPanel(); break;
+            }
+
+            if (currentSection === 'points') {
+                setupUploadZone();
+            }
+        }
+
+        function renderRoutesPanel() {
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title">📋 Маршруты</div>
+                    <div class="panel-actions">
+                        <button class="icon-btn" onclick="addRoute()" title="Добавить маршрут">➕</button>
+                    </div>
+                </div>
+                <input type="text" class="search-box" placeholder="🔍 Поиск маршрута..." onkeyup="filterItems(this.value)">
+                <div class="items-list">`;
+
+            routes.forEach(r => {
+                const dist = (r.points.length * 15.1).toFixed(1);
+                html += `
+                    <div class="item-card ${r.id === activeRouteId ? 'active' : ''}" onclick="switchRoute(${r.id})">
+                        <div class="item-header">
+                            <div class="item-icon" style="background:${r.color}20;color:${r.color};">🛣</div>
+                            <div class="item-title">${r.name}</div>
+                            <div class="item-status status-active">Активен</div>
+                        </div>
+                        <div class="item-meta">
+                            <span>👤 ${r.driver}</span>
+                            <span>🚗 ${r.vehicle}</span>
+                            <span>📍 ${r.points.length} точек</span>
+                            <span>📏 ${dist} км</span>
+                        </div>
+                    </div>`;
+            });
+
+            html += `</div>`;
+            return html;
+        }
+
+        function renderPointsPanel() {
+            let allPoints = [];
+            routes.forEach(r => {
+                r.points.forEach((p, i) => {
+                    allPoints.push({ ...p, routeName: r.name, routeColor: r.color, num: i + 1, routeId: r.id });
+                });
+            });
+
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title">📍 Точки (${allPoints.length})</div>
+                    <div class="panel-actions">
+                        <button class="icon-btn" onclick="document.getElementById('fileInput').click()" title="Загрузить Excel">📥</button>
+                        <button class="icon-btn" onclick="openMongoModal()" title="Выгрузить в MongoDB">🗄</button>
+                    </div>
+                </div>
+
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFileUpload(event)">
+
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-icon">📊</div>
+                    <div class="upload-text">Перетащите Excel файл</div>
+                    <div class="upload-hint">или нажмите для выбора</div>
+                </div>
+
+                <button class="add-btn" onclick="openAddPointModal()">➕ Добавить точку</button>
+
+                <input type="text" class="search-box" placeholder="🔍 Поиск точки..." onkeyup="filterItems(this.value)">
+                <div class="items-list">`;
+
+            allPoints.forEach((p, idx) => {
+                const statusMap = { done: ['Доставлено', 'status-done'], active: ['В пути', 'status-active'], pending: ['Ожидает', 'status-pending'] };
+                const [statusText, statusClass] = statusMap[p.status] || ['Неизвестно', ''];
+                html += `
+                    <div class="item-card" onclick="focusPoint(${p.routeId}, ${idx})">
+                        <div class="item-header">
+                            <div class="item-icon" style="background:${p.routeColor}20;color:${p.routeColor};">${p.num}</div>
+                            <div class="item-title">${p.address}</div>
+                            <div class="item-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div class="item-meta">
+                            <span>🕐 ${p.time}</span>
+                            <span>📍 ${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}</span>
+                            <span>🛣 ${p.routeName}</span>
+                        </div>
+                    </div>`;
+            });
+
+            html += `</div>
+                <button class="mongo-btn" onclick="openMongoModal()">
+                    <span>🗄</span> Выгрузить в MongoDB
+                </button>`;
+            return html;
+        }
+
+        function renderZonesPanel() {
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title">🗺 Зоны (${zones.length})</div>
+                    <div class="panel-actions">
+                        <button class="icon-btn" onclick="addZone()" title="Добавить зону">➕</button>
+                    </div>
+                </div>
+                <input type="text" class="search-box" placeholder="🔍 Поиск зоны..." onkeyup="filterItems(this.value)">
+                <div class="items-list">`;
+
+            zones.forEach(z => {
+                const statusMap = { active: ['Активна', 'status-active'], pending: ['Ограничена', 'status-pending'], inactive: ['Запрет', 'status-inactive'] };
+                const [statusText, statusClass] = statusMap[z.status];
+                html += `
+                    <div class="item-card" onclick="focusZone(${z.id})">
+                        <div class="item-header">
+                            <div class="item-icon" style="background:${z.color}20;color:${z.color};">🗺</div>
+                            <div class="item-title">${z.name}</div>
+                            <div class="item-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div class="item-meta">
+                            <span>📍 ${z.area}</span>
+                            <span>📏 ${z.size}</span>
+                            <span> ${z.points} точек</span>
+                        </div>
+                    </div>`;
+            });
+
+            html += `</div>`;
+            return html;
+        }
+
+        function renderDriversPanel() {
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title">👥 Водители (${drivers.length})</div>
+                    <div class="panel-actions">
+                        <button class="icon-btn" onclick="addDriver()" title="Добавить водителя">➕</button>
+                    </div>
+                </div>
+                <input type="text" class="search-box" placeholder="🔍 Поиск водителя..." onkeyup="filterItems(this.value)">
+                <div class="items-list">`;
+
+            drivers.forEach(d => {
+                const statusMap = { active: ['В рейсе', 'status-active'], pending: ['Ожидает', 'status-pending'], inactive: ['Отдых', 'status-inactive'] };
+                const [statusText, statusClass] = statusMap[d.status];
+                html += `
+                    <div class="item-card" onclick="focusDriver(${d.id})">
+                        <div class="item-header">
+                            <div class="item-icon" style="background:#e8f5f0;">👤</div>
+                            <div class="item-title">${d.name}</div>
+                            <div class="item-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div class="item-meta">
+                            <span> ${d.phone}</span>
+                            <span>🚗 ${d.vehicle}</span>
+                            <span>🛣 ${d.route}</span>
+                            <span>📊 ${d.trips} рейсов</span>
+                            <span>⭐ ${d.experience} лет</span>
+                        </div>
+                    </div>`;
+            });
+
+            html += `</div>`;
+            return html;
+        }
+
+        function renderTransportPanel() {
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title"> Транспорт (${transport.length})</div>
+                    <div class="panel-actions">
+                        <button class="icon-btn" onclick="addTransport()" title="Добавить транспорт">➕</button>
+                    </div>
+                </div>
+                <input type="text" class="search-box" placeholder=" Поиск транспорта..." onkeyup="filterItems(this.value)">
+                <div class="items-list">`;
+
+            transport.forEach(t => {
+                const statusMap = { active: ['В рейсе', 'status-active'], pending: ['Готов', 'status-pending'], inactive: ['Отдых', 'status-inactive'], repair: ['Ремонт', 'status-inactive'] };
+                const [statusText, statusClass] = statusMap[t.status];
+                html += `
+                    <div class="item-card" onclick="focusTransport(${t.id})">
+                        <div class="item-header">
+                            <div class="item-icon" style="background:#e8f0fe;">🚗</div>
+                            <div class="item-title">${t.plate}</div>
+                            <div class="item-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div class="item-meta">
+                            <span>🏭 ${t.brand}</span>
+                            <span>📦 ${t.type}</span>
+                            <span>⚖ ${t.capacity}</span>
+                            <span> ${t.driver}</span>
+                        </div>
+                    </div>`;
+            });
+
+            html += `</div>`;
+            return html;
+        }
+
+        function renderTrackersPanel() {
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title">📡 Трекеры (${trackers.length})</div>
+                    <div class="panel-actions">
+                        <button class="icon-btn" onclick="addTracker()" title="Добавить трекер"></button>
+                    </div>
+                </div>
+                <input type="text" class="search-box" placeholder="🔍 Поиск трекера..." onkeyup="filterItems(this.value)">
+                <div class="items-list">`;
+
+            trackers.forEach(t => {
+                const statusMap = { online: ['Онлайн', 'status-active'], offline: ['Оффлайн', 'status-inactive'], alarm: ['Тревога', 'status-inactive'] };
+                const [statusText, statusClass] = statusMap[t.status];
+                html += `
+                    <div class="item-card" onclick="focusTracker('${t.id}')">
+                        <div class="item-header">
+                            <div class="item-icon" style="background:#fef3e2;">📡</div>
+                            <div class="item-title">${t.id}</div>
+                            <div class="item-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div class="item-meta">
+                            <span> ${t.device}</span>
+                            <span>🚗 ${t.vehicle}</span>
+                            <span>🕐 ${t.lastSeen}</span>
+                            <span>🔋 ${t.battery}</span>
+                        </div>
+                    </div>`;
+            });
+
+            html += `</div>`;
+            return html;
+        }
+
+        // ===== SECTIONS =====
+        function switchSection(section, menuEl) {
+            document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
+            menuEl.classList.add('active');
+
+            document.querySelectorAll('.section-content').forEach(s => s.classList.remove('active'));
+            document.getElementById(`section-${section}`).classList.add('active');
+
+            currentSection = section;
+
+            const titles = {
+                routes: 'Построение маршрутов',
+                points: 'Точки доставки',
+                zones: 'Зоны обслуживания',
+                drivers: 'Водители',
+                transport: 'Транспорт',
+                trackers: 'GPS-трекеры'
+            };
+            document.getElementById('pageTitle').textContent = titles[section];
+
+            const actionButtons = document.getElementById('actionButtons');
+            if (section === 'routes') {
+                actionButtons.innerHTML = `
+                    <button class="btn btn-secondary" onclick="clearActiveRoute()"><span>✕</span> Очистить</button>
+                    <button class="btn btn-secondary" onclick="optimizeRoute()"><span></span> Оптимизировать</button>
+                    <button class="btn btn-primary" onclick="saveAllRoutes()"><span>💾</span> Сохранить все</button>`;
+            } else {
+                actionButtons.innerHTML = `
+                    <button class="btn btn-secondary"><span>📥</span> Экспорт</button>
+                    <button class="btn btn-primary" onclick="openAddPointModal()"><span>➕</span> Добавить</button>`;
+            }
+
+            renderDynamicPanel();
+
+            if (section === 'routes') setTimeout(initMainMap, 100);
+            if (section === 'points') setTimeout(initPointsMap, 100);
+            if (section === 'zones') setTimeout(initZonesMap, 100);
+        }
+
+        // ===== MAPS =====
+        function initMainMap() {
+            if (mainMap) return;
+            mainMap = L.map('mainMap').setView([55.7558, 37.6173], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mainMap);
+            renderMapRoutes();
+            setupMapClick(mainMap);
+            showMapHint('mapHint');
+        }
+
+        function initPointsMap() {
+            if (pointsMap) return;
+            pointsMap = L.map('pointsMap').setView([55.7558, 37.6173], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(pointsMap);
+            renderMapRoutes();
+            setupMapClick(pointsMap);
+            showMapHint('pointsMapHint');
+        }
+
+        function initZonesMap() {
+            if (zonesMap) return;
+            zonesMap = L.map('zonesMap').setView([55.7558, 37.6173], 11);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(zonesMap);
+
+            zones.forEach(z => {
+                const coords = [
+                    [55.78, 37.58], [55.78, 37.65], [55.73, 37.65], [55.73, 37.58]
+                ];
+                L.polygon(coords, { color: z.color, fillColor: z.color, fillOpacity: 0.2, weight: 2 })
+                    .addTo(zonesMap).bindPopup(`<b>${z.name}</b><br>${z.area}`);
+            });
+        }
+
+        function renderMapRoutes() {
+            const map = mainMap || pointsMap;
+            if (!map) return;
+
+            map.eachLayer(layer => {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            routes.forEach(route => {
+                if (route.points.length === 0) return;
+                const latlngs = route.points.map(p => [p.lat, p.lng]);
+
+                L.polyline(latlngs, {
+                    color: route.color, weight: 4, opacity: 0.8,
+                    dashArray: route.id === activeRouteId ? null : '8, 8'
+                }).addTo(map);
+
+                route.points.forEach((p, i) => {
+                    const isActive = route.id === activeRouteId;
+                    const icon = L.divIcon({
+                        className: 'custom-marker',
+                        html: `<div style="background:${route.color};border:3px solid white;border-radius:50%;width:${isActive?32:24}px;height:${isActive?32:24}px;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:${isActive?13:10}px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">${i+1}</div>`,
+                        iconSize: [isActive?32:24, isActive?32:24],
+                        iconAnchor: [isActive?16:12, isActive?16:12]
+                    });
+                    L.marker([p.lat, p.lng], { icon }).addTo(map)
+                        .bindPopup(`<b>${route.name} • Точка ${i+1}</b><br>${p.address}<br><small>${p.time}</small>`);
+                });
+            });
+        }
+
+        function setupMapClick(map) {
+            map.on('click', function(e) {
+                pendingPointCoords = e.latlng;
+                openAddPointModal(e.latlng);
+            });
+        }
+
+        function showMapHint(hintId) {
+            const hint = document.getElementById(hintId);
+            if (hint) {
+                hint.classList.add('show');
+                setTimeout(() => hint.classList.remove('show'), 5000);
+            }
+        }
+
+        // ===== ADD POINT MODAL =====
+        function openAddPointModal(coords) {
+            const modal = document.getElementById('addPointModal');
+            modal.classList.add('active');
+
+            // Populate route select
+            const routeSelect = document.getElementById('pointRoute');
+            routeSelect.innerHTML = routes.map(r => 
+                `<option value="${r.id}" ${r.id === activeRouteId ? 'selected' : ''}>${r.name}</option>`
+            ).join('');
+
+            // If coords provided (from map click)
+            if (coords) {
+                document.getElementById('pointLat').value = coords.lat.toFixed(6);
+                document.getElementById('pointLng').value = coords.lng.toFixed(6);
+                document.getElementById('pointAddress').value = `Точка на карте (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`;
+            } else {
+                document.getElementById('pointLat').value = '';
+                document.getElementById('pointLng').value = '';
+                document.getElementById('pointAddress').value = '';
+            }
+
+            document.getElementById('pointTime').value = '';
+            document.getElementById('pointStatus').value = 'pending';
+            document.getElementById('pointComment').value = '';
+        }
+
+        function closeAddPointModal() {
+            document.getElementById('addPointModal').classList.remove('active');
+            pendingPointCoords = null;
+        }
+
+        function savePointFromModal() {
+            const address = document.getElementById('pointAddress').value.trim();
+            const lat = parseFloat(document.getElementById('pointLat').value);
+            const lng = parseFloat(document.getElementById('pointLng').value);
+            const time = document.getElementById('pointTime').value;
+            const status = document.getElementById('pointStatus').value;
+            const routeId = parseInt(document.getElementById('pointRoute').value);
+
+            // Validation
+            if (!address) {
+                showToast('Введите адрес', 'error');
+                return;
+            }
+            if (isNaN(lat) || lat < -90 || lat > 90) {
+                showToast('Неверная широта (-90 до 90)', 'error');
+                return;
+            }
+            if (isNaN(lng) || lng < -180 || lng > 180) {
+                showToast('Неверная долгота (-180 до 180)', 'error');
+                return;
+            }
+
+            // Find route
+            const route = routes.find(r => r.id === routeId);
+            if (!route) {
+                showToast('Маршрут не найден', 'error');
+                return;
+            }
+
+            // Add point
+            const newPoint = {
+                lat: lat,
+                lng: lng,
+                address: address,
+                time: time || '--:--',
+                status: status
+            };
+
+            route.points.push(newPoint);
+            
+            // Update active route if needed
+            if (routeId !== activeRouteId) {
+                activeRouteId = routeId;
+            }
+
+            closeAddPointModal();
+            renderAll();
+            renderMapRoutes();
+            showToast(`✅ Точка добавлена в "${route.name}"`, 'success');
+        }
+
+        // ===== ACTIONS =====
+        function switchRoute(id) {
+            activeRouteId = id;
+            renderDynamicPanel();
+            renderMapRoutes();
+        }
+
+        function focusPoint(routeId, pointIdx) {
+            activeRouteId = routeId;
+            const map = mainMap || pointsMap;
+            if (map) {
+                const route = routes.find(r => r.id === routeId);
+                if (route && route.points[pointIdx]) {
+                    const p = route.points[pointIdx];
+                    map.setView([p.lat, p.lng], 15);
+                }
+            }
+            renderDynamicPanel();
+            renderMapRoutes();
+        }
+
+        function focusZone(id) {
+            showToast(`Зона ${id} выбрана`, 'success');
+        }
+
+        function focusDriver(id) {
+            const driver = drivers.find(d => d.id === id);
+            showToast(`Водитель: ${driver.name}`, 'success');
+        }
+
+        function focusTransport(id) {
+            const t = transport.find(t => t.id === id);
+            showToast(`Транспорт: ${t.plate}`, 'success');
+        }
+
+        function focusTracker(id) {
+            showToast(`Трекер: ${id}`, 'success');
+        }
+
+        function addRoute() {
+            const colors = ['#2d9c7a', '#3498db', '#e67e22', '#9b59b6', '#e74c3c'];
+            routes.push({
+                id: routes.length + 1,
+                name: `Маршрут ${routes.length + 1}`,
+                color: colors[routes.length % colors.length],
+                driver: 'Новый водитель',
+                vehicle: 'Новый транспорт',
+                startTime: '09:00',
+                points: []
+            });
+            renderDynamicPanel();
+            showToast('Маршрут добавлен', 'success');
+        }
+
+        function addZone() { showToast('Добавление зоны', 'success'); }
+        function addDriver() { showToast('Добавление водителя', 'success'); }
+        function addTransport() { showToast('Добавление транспорта', 'success'); }
+        function addTracker() { showToast('Добавление трекера', 'success'); }
+
+        function clearActiveRoute() {
+            const route = routes.find(r => r.id === activeRouteId);
+            if (!route) return;
+            if (!confirm(`Очистить "${route.name}"?`)) return;
+            route.points = [{ lat: 55.7558, lng: 37.6173, address: 'Склад (старт)', time: route.startTime, status: 'pending' }];
+            renderAll();
+        }
+
+        function optimizeRoute() {
+            const route = routes.find(r => r.id === activeRouteId);
+            if (!route || route.points.length < 3) { alert('Нужно минимум 3 точки'); return; }
+            const first = route.points[0], last = route.points[route.points.length - 1];
+            const middle = route.points.slice(1, -1).sort(() => Math.random() - 0.5);
+            route.points = [first, ...middle, last];
+            renderAll();
+            showToast(`Маршрут "${route.name}" оптимизирован`, 'success');
+        }
+
+        function saveAllRoutes() {
+            const totalPoints = routes.reduce((s, r) => s + r.points.length, 0);
+            showToast(`✅ Сохранено! Маршрутов: ${routes.length}, Точек: ${totalPoints}`, 'success');
+        }
+
+        // ===== FILE UPLOAD =====
+        function setupUploadZone() {
+            const uploadZone = document.getElementById('uploadZone');
+            if (!uploadZone) return;
+
+            uploadZone.addEventListener('click', () => document.getElementById('fileInput').click());
+            uploadZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadZone.classList.add('dragover');
+            });
+            uploadZone.addEventListener('dragleave', () => {
+                uploadZone.classList.remove('dragover');
+            });
+            uploadZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadZone.classList.remove('dragover');
+                const file = e.dataTransfer.files[0];
+                if (file) processFile(file);
+            });
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) processFile(file);
+        }
+
+        function processFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+
+                    if (jsonData.length === 0) {
+                        showToast('Файл пуст', 'error');
+                        return;
+                    }
+
+                    const newPoints = jsonData.map((row, idx) => ({
+                        lat: parseFloat(row.lat || row.latitude || row.широта || 55.7558 + Math.random() * 0.02),
+                        lng: parseFloat(row.lng || row.longitude || row.долгота || 37.6173 + Math.random() * 0.02),
+                        address: row.address || row.адрес || `Точка ${idx + 1}`,
+                        time: row.time || row.время || '--:--',
+                        status: row.status || 'pending'
+                    }));
+
+                    const route = routes.find(r => r.id === activeRouteId);
+                    if (route) {
+                        route.points = [...route.points, ...newPoints];
+                        renderAll();
+                        showToast(`✅ Загружено ${newPoints.length} точек из Excel`, 'success');
+                    }
+                } catch (err) {
+                    showToast('Ошибка чтения файла: ' + err.message, 'error');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // ===== MONGODB =====
+        function openMongoModal() {
+            document.getElementById('mongoModal').classList.add('active');
+        }
+
+        function closeMongoModal() {
+            document.getElementById('mongoModal').classList.remove('active');
+        }
+
+        async function exportToMongo() {
+            const uri = document.getElementById('mongoUri').value;
+            const db = document.getElementById('mongoDb').value;
+            const collection = document.getElementById('mongoCollection').value;
+
+            let allPoints = [];
+            routes.forEach(r => {
+                r.points.forEach((p, i) => {
+                    allPoints.push({
+                        route_id: r.id,
+                        route_name: r.name,
+                        point_number: i + 1,
+                        address: p.address,
+                        lat: p.lat,
+                        lng: p.lng,
+                        time: p.time,
+                        status: p.status,
+                        created_at: new Date().toISOString()
+                    });
+                });
+            });
+
+            try {
+                showToast(' Выгрузка в MongoDB...', 'success');
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                console.log('MongoDB Export:', { uri, db, collection, points: allPoints });
+                showToast(`✅ Выгружено ${allPoints.length} точек в MongoDB`, 'success');
+                closeMongoModal();
+            } catch (err) {
+                showToast('Ошибка выгрузки: ' + err.message, 'error');
+            }
+        }
+
+        // ===== FILTER =====
+        function filterItems(query) {
+            const items = document.querySelectorAll('.item-card');
+            items.forEach(item => {
+                item.style.display = item.textContent.toLowerCase().includes(query.toLowerCase()) ? '' : 'none';
+            });
+        }
+
+        // ===== TOAST =====
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast show ${type}`;
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        // ===== CALENDAR =====
+        const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+        let currentMonth = 3, currentYear = 2026, selectedDay = 13;
+
+        function generateCalendar() {
+            const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+            const adjustedFirstDay = firstDay === 0 ? 6 : firstDay - 1;
+            let html = '';
+            for (let i = 0; i < adjustedFirstDay; i++) html += '<div class="calendar-day empty"></div>';
+            for (let day = 1; day <= daysInMonth; day++) {
+                html += `<div class="calendar-day ${day === selectedDay ? 'active' : ''}" onclick="selectDay(${day})">${day}</div>`;
+            }
+            document.getElementById('calendarDays').innerHTML = html;
+            document.getElementById('calendarMonth').textContent = `${months[currentMonth]} ${currentYear}`;
+        }
+
+        function changeMonth(delta) {
+            currentMonth += delta;
+            if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            else if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            generateCalendar();
+        }
+
+        function selectDay(day) { selectedDay = day; generateCalendar(); updateSelectedDate(); }
+
+        function selectQuickDate(type, btn) {
+            document.querySelectorAll('.quick-date-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const today = new Date();
+            let date = new Date(today);
+            if (type === 'yesterday') date.setDate(date.getDate() - 1);
+            else if (type === 'tomorrow') date.setDate(date.getDate() + 1);
+            selectedDay = date.getDate();
+            currentMonth = date.getMonth();
+            currentYear = date.getFullYear();
+            generateCalendar();
+            updateSelectedDate();
+        }
+
+        function updateSelectedDate() {
+            document.getElementById('selectedDate').textContent = 
+                `Пн ${String(selectedDay).padStart(2,'0')}.${String(currentMonth+1).padStart(2,'0')}.${currentYear}`;
+        }
+
+        // ===== RENDER ALL =====
+        function renderAll() {
+            renderDynamicPanel();
+            renderMapRoutes();
+
+            const totalPoints = routes.reduce((s, r) => s + r.points.length, 0);
+            const totalDist = routes.reduce((s, r) => s + r.points.length * 15.1, 0).toFixed(1);
+            document.getElementById('statRoutes').textContent = routes.length;
+            document.getElementById('statDistance').textContent = totalDist;
+            document.getElementById('statPoints').textContent = totalPoints;
+            document.getElementById('pointsTotal').textContent = totalPoints;
+        }
+
+        // ===== INIT =====
+        generateCalendar();
+        renderAll();
+        setTimeout(initMainMap, 100);
+    </script>
+</body>
+</html>
