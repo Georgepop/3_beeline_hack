@@ -82,7 +82,8 @@ docker compose up --build
 
 `/api/plan` возвращает `engineers[]` (маршруты: стопы с arrival/start_work/
 finish/window), `unassigned[]` (с причиной), `metrics`, `comparison`
-{control}. Структуры — в `app/schemas.py`.
+{control}. `GET /api/solvers` — список подключённых алгоритмов (реестр `app/solvers`).
+Структуры — в `app/schemas.py`.
 
 ## Источник «API коллеги» (DATA_SOURCE=remote)
 

@@ -36,11 +36,7 @@
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Алгоритм</label>
-                    <select class="form-select" id="mode" onchange="onSettingsChange()">
-                        <option value="improved">Улучшенный</option>
-                        <option value="baseline_fifo">Базовый (FIFO)</option>
-                        <option value="benchmark_ortools">OR-Tools*</option>
-                    </select>
+                    <select class="form-select" id="mode" onchange="onSettingsChange()"></select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Дистанция</label>
@@ -94,7 +90,7 @@
             <!-- Requests -->
             <div class="section-content" id="section-requests">
                 <div class="search-row">
-                    <input type="text" class="search-box" id="reqSearch" placeholder="🔍 Поиск заявки..." oninput="renderRequests()">
+                    <input type="text" class="search-box" id="reqSearch" placeholder="🔍 Поиск заявки..." oninput="filterRequests()">
                     <span class="search-hint">Вся заявка = отдельный выезд инженера</span>
                 </div>
                 <div class="list-wrap" id="requestsList"></div>

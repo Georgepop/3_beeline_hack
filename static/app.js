@@ -63,8 +63,8 @@ async function init() {
         state.dist = settings.dist_mode;
         state.source = settings.data_source || 'csv';
         $('source').value = state.source;
-        $('mode').value = state.mode;
         $('dist').value = state.dist;
+        await fillSolvers();
 
         state.regions = await api('/api/regions');
         const sel = $('region');
@@ -95,6 +95,31 @@ function showMapHint(text) {
     h.classList.add('show');
     clearTimeout(h._t);
     h._t = setTimeout(() => h.classList.remove('show'), 3500);
+}
+
+// ===== Селектор алгоритмов (реестр на бэкенде: GET /api/solvers) =====
+async function fillSolvers() {
+    let opts = [];
+    try {
+        const solvers = await api('/api/solvers');
+        opts = solvers.map(s => `<option value="${esc(s.name)}">${esc(s.label)}</option>`);
+    } catch (e) {
+        // бэкенд без /api/solvers (старый процесс) — фолбэк на известные алгоритмы
+        opts = [`<option value="baseline_fifo">Базовый (FIFO)</option>`,
+                `<option value="improved">Улучшенный</option>`];
+    }
+    $('mode').innerHTML = opts.join('');
+    const chosen = String(state.mode || 'improved');
+    if (!$('mode').querySelector(`option[value="${chosen}"]`)) {
+        // текущий mode из настроек (например benchmark_ortools из env) — показать выбранным
+        $('mode').insertAdjacentHTML('beforeend', `<option value="${esc(chosen)}">${esc(chosen)}</option>`);
+    }
+    $('mode').value = chosen;
+    if (!opts.length) $('mode').insertAdjacentHTML('beforeend',
+        `<option value="improved" disabled>Алгоритмы не загрузились</option>`);
+    // OR-Tools не установлен — видим в списке, но выбрать нельзя (с подсказкой).
+    $('mode').insertAdjacentHTML('beforeend',
+        `<option value="benchmark_ortools" disabled title="Требуется пакет ortools (см. requirements-benchmark.txt) — не установлен, план считается improved">OR-Tools* — не установлен</option>`);
 }
 
 // ===== Настройки / пересчёт =====
@@ -151,7 +176,12 @@ function switchSection(section, el) {
 }
 
 function renderSectionMain(section) {
-    if (!state.plan) return;
+    if (!state.plan) {
+        const box = { requests: 'requestsList', engineers: 'engineersList' }[section];
+        if (box && $(box)) $(box).innerHTML = '<div class="item-meta">План не загружен — нажмите «Рассчитать план»</div>';
+        if (section === 'metrics') renderMetrics();
+        return;
+    }
     if (section === 'requests') $('requestsList').innerHTML = renderRequests();
     if (section === 'engineers') $('engineersList').innerHTML = renderEngineers();
     if (section === 'metrics') renderMetrics();
@@ -292,6 +322,10 @@ function focusEngineer(idx) {
 }
 
 // ===== Заявки =====
+function filterRequests() {
+    if ($('requestsList')) $('requestsList').innerHTML = renderRequests();
+}
+
 function renderRequests() {
     const plan = state.plan;
     if (!plan) return '<div class="item-meta">План не загружен</div>';
@@ -423,9 +457,14 @@ function metricsTable(title, m, hl) {
 }
 function renderMetrics() {
     const p = state.plan;
+    if (!p) {
+        $('metricsCompare').innerHTML = '<div class="item-meta">План не загружен — нажмите «Рассчитать план»</div>';
+        return;
+    }
     const c = p.comparison || {};
+    const modeLabel = { baseline_fifo: 'Базовый (FIFO)', improved: 'Улучшенный' }[state.mode] || state.mode;
     let html = '<div class="metrics-compare">';
-    html += metricsTable('Наш план (improved)', p.metrics, true);
+    html += metricsTable('Наш план (' + modeLabel + ')', p.metrics, true);
     html += controlTable('Контрольное распределение* (бригады)', c.control);
     html += '</div>';
     $('metricsCompare').innerHTML = html;

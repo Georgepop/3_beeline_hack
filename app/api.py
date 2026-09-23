@@ -22,6 +22,13 @@ from app.schemas import (
     SolverMode,
 )
 
+# Человекочитаемые названия алгоритмов (для селектора во фронте, GET /api/solvers).
+SOLVER_LABELS = {
+    "baseline_fifo": "Базовый (FIFO)",
+    "improved": "Улучшенный",
+    "benchmark_ortools": "OR-Tools*",
+}
+
 # Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
 # Инициализация и изменение синхронизируются с get_settings(), чтобы источники/
 # солверы видели тот же data_source.
@@ -94,7 +101,17 @@ def create_app() -> FastAPI:
         _, engs = planner.dataset(region)
         return engs
 
+    @app.get("/api/solvers")
+    def solvers():
+        from app.solvers import names as solver_names
+
+        return [
+            {"name": n, "label": SOLVER_LABELS.get(n, n), "enabled": True}
+            for n in solver_names()
+        ]
+
     @app.post("/api/plan", response_model=PlanResponse)
+    @app.get("/api/plan", response_model=PlanResponse)
     def plan(region: RegionId = Query(default=_settings().region),
              mode: SolverMode = Query(default=_settings().solver_mode),
              dist: DistMode = Query(default=_settings().dist_mode)):
@@ -121,11 +138,17 @@ def create_app() -> FastAPI:
             setattr(get_settings(), k, v)
         return _settings()
 
-    # Статика
+    # Статика (без кеша, чтобы правки app.js/index.html применялись сразу)
     static_dir = Path(__file__).resolve().parent.parent / "static"
     if static_dir.exists():
-        from fastapi.staticfiles import StaticFiles
+        from starlette.staticfiles import StaticFiles
 
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+        class _NoCacheStatic(StaticFiles):
+            def file_response(self, *a, **kw):
+                resp = super().file_response(*a, **kw)
+                resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+                return resp
+
+        app.mount("/", _NoCacheStatic(directory=static_dir, html=True), name="static")
 
     return app
