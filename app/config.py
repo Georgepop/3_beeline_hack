@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/app.db"
 
     # Логика (переключаются без правки кода: параметры запроса / /api/settings / env):
-    data_source: str = "csv"           # mock | csv | db
+    data_source: str = "csv"           # mock | csv | remote | db
     solver_mode: str = "improved"      # baseline_fifo | improved | benchmark_ortools
     dist_mode: str = "haversine"       # haversine | osrm
     geocoder: str = "nominatim"        # nominatim | districts
@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     osrm_url: str = "https://router.project-osrm.org"
     nominatim_url: str = "https://nominatim.openstreetmap.org"
+    # API коллеги (данные по точкам и модели инженеров) — источник data_source=remote.
+    remote_base_url: str = "http://85.198.65.126:8000"
+    remote_timeout: int = 20
 
     shift_start: str = "08:00"
     shift_end: str = "20:00"

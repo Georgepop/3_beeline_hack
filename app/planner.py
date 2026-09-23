@@ -1,8 +1,9 @@
 """Диспетчер: данные + солвер по активной конфигурации + сравнение.
 
-data_source: mock | csv | db  →  откуда берём заявки/инженеров/офис.
-mode: baseline_fifo | improved | benchmark_ortools  →  какой решатель запускаем.
-В план всегда подкладывается сравнение improved vs baseline (+ контрольное — справочно).
+data_source: mock | csv | remote | db  →  откуда берём заявки/инженеров/офис.
+mode: baseline_fifo | improved | benchmark_ortools  →  какой решатель запускаем
+      (реестр app/solvers; сейчас реализован improved; остальные — задел).
+В сравнении оставляем контрольное распределение (справочно).
 """
 
 from app.config import get_settings
@@ -19,8 +20,12 @@ from app.schemas import (
 from app.solvers import get as get_solver
 
 
-def dataset(region: str) -> tuple[list[Request], list[Engineer]]:
+def dataset(region: str, active: bool = True) -> tuple[list[Request], list[Engineer]]:
     ds = get_settings().data_source
+    if ds == "remote":
+        from app import remote_source
+        reqs = remote_source.active_requests(region) if active else remote_source.requests_for(region)
+        return reqs, remote_source.engineers_for(region)
     if ds in ("csv", "db"):
         from app.data_source import engineers_for, requests_for
         return requests_for(region), engineers_for(region)
@@ -31,28 +36,20 @@ def solve(region: str, mode: str, dist: str) -> PlanResponse:
     reqs, engs = dataset(region)
     plan = get_solver(mode)(region, dist, reqs, engs)
 
-    baseline = None
-    if mode != "baseline_fifo":
-        baseline = get_solver("baseline_fifo")(region, dist, list(reqs), list(engs))
-    improved = None
-    if mode == "improved":
-        improved = plan
-    else:
-        improved = get_solver("improved")(region, dist, list(reqs), list(engs))
-
     control = None
-    if get_settings().data_source in ("csv", "db"):
+    ds = get_settings().data_source
+    if ds == "remote":
+        from app import remote_source
+        control = remote_source.control_metrics(region)
+        plan.date = remote_source.plan_date(region) or plan.date
+    elif ds in ("csv", "db"):
         try:
             from app.data_source import control_metrics
             control = control_metrics(region)
         except Exception:
             control = None
 
-    plan.comparison = Comparison(
-        baseline=baseline.metrics if baseline else None,
-        improved=improved.metrics if improved else None,
-        control=control,
-    )
+    plan.comparison = Comparison(control=control)
     return plan
 
 

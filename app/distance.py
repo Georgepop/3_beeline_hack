@@ -30,6 +30,10 @@ def travel_minutes_km(km: float, transport: str = "auto") -> int:
     return int(round(km / speed * 60))
 
 
+def travel_minutes_speed(km: float, speed_kph: float) -> int:
+    return int(round(km / max(speed_kph, 0.5) * 60))
+
+
 def parse_hhmm(hhmm: str) -> int:
     hh, mm = hhmm.split(":")[:2]
     return int(hh) * 60 + int(mm)

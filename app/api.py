@@ -23,7 +23,14 @@ from app.schemas import (
 )
 
 # Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
-_runtime = SettingsOut()
+# Инициализация и изменение синхронизируются с get_settings(), чтобы источники/
+# солверы видели тот же data_source.
+_runtime = SettingsOut(
+    solver_mode=get_settings().solver_mode,
+    dist_mode=get_settings().dist_mode,
+    data_source=get_settings().data_source,
+    region=get_settings().region,
+)
 
 
 def _settings() -> SettingsOut:
@@ -32,6 +39,19 @@ def _settings() -> SettingsOut:
 
 def _region_box(region: str) -> RegionMeta:
     ds = get_settings().data_source
+    if ds == "remote":
+        from app import remote_source
+        from app.schemas import LatLng
+
+        r = remote_source.load_region(region)
+        return RegionMeta(
+            id=region,
+            name=r["region_name"],
+            office_address=r.get("office_address", ""),
+            office=LatLng(**r["office"]),
+            requests=len(r["requests"]),
+            engineers=len(r["engineers"]),
+        )
     if ds in ("csv", "db"):
         from app.data_source import load_region
         from app.schemas import LatLng
@@ -63,7 +83,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/requests", response_model=list[Request])
     def requests(region: RegionId = Query(default=_settings().region)):
-        reqs, _ = planner.dataset(region)
+        if get_settings().data_source == "remote":
+            from app import remote_source
+            return remote_source.requests_for(region)  # все точки: статусы/контроль — справочно
+        reqs, _ = planner.dataset(region, active=False)
         return reqs
 
     @app.get("/api/engineers", response_model=list[Engineer])
@@ -95,6 +118,7 @@ def create_app() -> FastAPI:
         upd = body.model_dump(exclude_none=True)
         for k, v in upd.items():
             setattr(_runtime, k, v)
+            setattr(get_settings(), k, v)
         return _settings()
 
     # Статика

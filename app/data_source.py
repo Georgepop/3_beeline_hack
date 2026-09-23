@@ -112,11 +112,15 @@ def control_metrics(region: str) -> dict | None:
     bi = header.index("Бригада")
     brigades = set()
     count = 0
+    total = 0
     for r in rows[1:]:
-        if r and r[bi].strip():
+        if not r:
+            continue
+        total += 1
+        if r[bi].strip():
             brigades.add(r[bi].strip())
             count += 1
-    return {"assigned_count": count, "engineers_used": len(brigades)}
+    return {"total": total, "assigned_count": count, "engineers_used": len(brigades)}
 
 
 def _find_synthetic(rdir: Path) -> Path:

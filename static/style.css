@@ -156,5 +156,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .office-ico { border-color: #e67e22; font-size: 14px; width: 30px; height: 30px; }
 .un-ico { border-color: #95a5a6; background: #ecf0f1; color: #7f8c8d; font-size: 12px; }
+.status-ico {
+    background: white; border-radius: 50%; border: 2px solid;
+    width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.status-chip {
+    display: inline-block; padding: 1px 6px; border-radius: 10px;
+    border: 1px solid; font-size: 11px; line-height: 1.4;
+}
 .leaflet-popup-content { font-size: 12px; line-height: 1.5; }
 .leaflet-popup-content b { font-weight: 700; }

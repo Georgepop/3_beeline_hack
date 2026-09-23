@@ -29,6 +29,8 @@ class Request(BaseModel):
     priority: str = "normal"                  # normal | urgent (аварийная — раньше)
     duration_min: int = 0                     # норматив работ (без дороги)
     required_transport: Optional[str] = None  # auto | None — ресурсное требование
+    status: Optional[str] = None              # статус BK из источника (remote: Отправлена/…) — справочно
+    control_brigade: Optional[str] = None     # бригада контрольного распределения (справочно)
     lat: Optional[float] = None
     lng: Optional[float] = None
 
@@ -53,6 +55,7 @@ class Engineer(BaseModel):
     skills_label: list[str] = []
     transport: str = ""                       # auto | transit | bike | walk
     transport_label: str = ""
+    speed_kph: Optional[float] = None         # прямая скорость (remote-модель коллеги); иначе из transport
     shift_start: str = "08:00"
     shift_end: str = "20:00"
     start: LatLng = Field(default_factory=LatLng)
@@ -121,7 +124,7 @@ class RegionMeta(BaseModel):
 
 SolverMode = Literal["baseline_fifo", "improved", "benchmark_ortools"]
 DistMode = Literal["haversine", "osrm"]
-DataSource = Literal["mock", "csv", "db"]
+DataSource = Literal["mock", "csv", "remote", "db"]
 RegionId = Literal["vostok", "yugo_vostok", "yugocentr"]
 
 
@@ -135,5 +138,5 @@ class SettingsIn(BaseModel):
 class SettingsOut(BaseModel):
     solver_mode: SolverMode = "improved"
     dist_mode: DistMode = "haversine"
-    data_source: DataSource = "mock"
+    data_source: DataSource = "csv"
     region: RegionId = "vostok"

@@ -4,11 +4,19 @@
 
 const COLORS = ['#2d9c7a', '#3498db', '#e67e22', '#9b59b6', '#16a085', '#c0392b', '#2980b9', '#8e44ad', '#d35400', '#27ae60'];
 const TRANSPORT_ICON = { auto: '🚗', transit: '🚌', bike: '🚲', walk: '🚶' };
+// Статусы заявок (remote) -> цвет маркера непланируемых/фоновых
+const STATUS_COLORS = {
+    'Отправлена': '#2d9c7a', 'В работе': '#e67e22', 'В пути': '#9b59b6',
+    'Не отправлена': '#7f8c8d', 'Просрочена': '#c0392b',
+    'Выполнена': '#b8d8c0', 'Отменена': '#636e72',
+};
+const STATUS_DEFAULT = '#b0bec5';
 
 const state = {
     region: 'vostok',
     mode: 'improved',
     dist: 'haversine',
+    source: 'csv',
     regions: [],
     plan: null,        // PlanResponse
     requests: [],      // Request[]
@@ -53,6 +61,8 @@ async function init() {
         state.region = settings.region;
         state.mode = settings.solver_mode;
         state.dist = settings.dist_mode;
+        state.source = settings.data_source || 'csv';
+        $('source').value = state.source;
         $('mode').value = state.mode;
         $('dist').value = state.dist;
 
@@ -98,11 +108,12 @@ async function applySettings() {
     state.region = $('region').value;
     state.mode = $('mode').value;
     state.dist = $('dist').value;
+    state.source = $('source').value;
     try {
         await api('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ region: state.region, solver_mode: state.mode, dist_mode: state.dist }),
+            body: JSON.stringify({ region: state.region, solver_mode: state.mode, dist_mode: state.dist, data_source: state.source }),
         });
         await loadPlan();
     } catch (e) {
@@ -228,6 +239,22 @@ function renderMap() {
             .bindPopup(`<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
     });
 
+    // Все точки (справочно) — цветом по статусу; запланированные не дублируем.
+    const displayed = new Set();
+    plan.engineers.forEach(eng => eng.stops.forEach(s => displayed.add(s.request_id)));
+    plan.unassigned.forEach(u => displayed.add(u.request_id));
+    state.requests.forEach(req => {
+        if (displayed.has(req.id)) return;
+        if (req.lat == null) return;
+        const color = STATUS_COLORS[req.status] || STATUS_DEFAULT;
+        L.marker([req.lat, req.lng], { icon: statusIcon(color, req.status) })
+            .addTo(state.layerGroup)
+            .bindPopup(
+                `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>Статус: <b>${esc(req.status || '—')}</b>` +
+                (req.control_brigade ? `<br>Контроль: ${esc(req.control_brigade)}` : '') +
+                (req.gigabit ? '<br>Гигабитное подключение' : ''), { maxWidth: 320 });
+    });
+
     if (allBounds.length) state.map.fitBounds(L.latLngBounds(allBounds).pad(0.15));
 }
 
@@ -291,6 +318,7 @@ function renderRequests() {
                 <span>👤 ${esc(s.eng.name)}</span>
                 <span>🕐 старт ${esc(s.start_work)}</span>
                 ${req ? `<span>${esc(req.skill_label)} · ${esc(req.bk_type)}</span>` : ''}
+                ${req && req.status ? `<span>${statusChip(req.status)}</span>` : ''}
             </div>
         </div>`;
     });
@@ -308,10 +336,39 @@ function renderRequests() {
             <div class="item-meta">
                 <span>⚠ ${esc(u.reason)}</span>
                 ${req ? `<span>${esc(req.skill_label)}</span>` : ''}
+                ${req && req.status ? `<span>${statusChip(req.status)}</span>` : ''}
+                ${req && req.control_brigade ? `<span>Контроль: ${esc(req.control_brigade)}</span>` : ''}
             </div>
         </div>`;
     });
+
+    // Справочно: все заявки источника (статусы/контроль), не вошедшие в план.
+    const inPlan = new Set([...assigned.map(s => s.request_id), ...unassigned.map(u => u.request_id)]);
+    const rest = state.requests.filter(r => !inPlan.has(r.id) && pass(r, q));
+    if (rest.length) {
+        html += '<div class="group-title">Справочно (источник): ' + rest.length + '</div>';
+        rest.forEach(r => {
+            html += `
+            <div class="item-card">
+                <div class="item-header">
+                    <div class="item-icon" style="background:#eef2f5;color:#90a4ae;">·</div>
+                    <div class="item-title">${esc(r.id)} — ${esc(r.address)}</div>
+                    <div class="status status-pending">${statusChip(r.status)}</div>
+                </div>
+                <div class="item-meta">
+                    <span>${esc(r.skill_label)} ${esc(r.bk_type)}</span>
+                    <span>Окно ${esc(r.window_start)}–${esc(r.window_end)}</span>
+                    ${r.control_brigade ? `<span>Контроль: ${esc(r.control_brigade)}</span>` : ''}
+                </div>
+            </div>`;
+        });
+    }
     return html;
+}
+
+function statusChip(status) {
+    const color = STATUS_COLORS[status] || STATUS_DEFAULT;
+    return `<span class="status-chip" style="color:${color};border-color:${color}55;background:${color}18;">${esc(status)}</span>`;
 }
 
 // ===== Инженеры =====
@@ -336,6 +393,8 @@ function renderEngineers() {
             </div>
             <div class="item-meta">
                 <span>${TRANSPORT_ICON[e.transport] || '🚶'} ${esc(e.transport_label)}</span>
+                ${e.speed_kph ? `<span>⏩ ${e.speed_kph} км/ч</span>` : ''}
+                <span>🕐 ${esc(e.shift_start)}–${esc(e.shift_end)}</span>
                 <span>🛠 ${esc(e.skills_label.join(', '))}</span>
                 ${inPlan ? `<span>📍 ${stops.length} заявок</span><span>📏 ${km.toFixed(1)} км</span>` : ''}
             </div>
@@ -365,13 +424,23 @@ function metricsTable(title, m, hl) {
 function renderMetrics() {
     const p = state.plan;
     const c = p.comparison || {};
-    const def = p.metrics;
     let html = '<div class="metrics-compare">';
-    html += metricsTable('Улучшенный план (текущий)', def, true);
-    html += metricsTable('Базовый план (FIFO)', c.baseline, false);
-    html += metricsTable('Контрольное распределение*', c.control ? { ...def, total_km: c.control.km ?? def.total_km } : null, false);
+    html += metricsTable('Наш план (improved)', p.metrics, true);
+    html += controlTable('Контрольное распределение* (бригады)', c.control);
     html += '</div>';
     $('metricsCompare').innerHTML = html;
+}
+
+function controlTable(title, c) {
+    if (!c) return `<div class="metric-table"><h3>${esc(title)}</h3><div class="item-meta">не считалось</div></div>`;
+    return `
+    <div class="metric-table">
+        <h3>${esc(title)}</h3>
+        <table>
+            ${metricRow('Назначено заявок', `${c.assigned_count ?? '—'} / ${c.total ?? c.assigned_count ?? '—'}`, false)}
+            ${metricRow('Бригад в работе', c.engineers_used ?? '—', false)}
+        </table>
+    </div>`;
 }
 
 // ===== Сценарии =====
@@ -432,6 +501,13 @@ function officeIcon() {
 }
 function unassignedIcon() {
     return L.divIcon({ className: '', html: '<div class="un-ico">✕</div>', iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -13] });
+}
+function statusIcon(color) {
+    return L.divIcon({
+        className: '',
+        html: `<div class="status-ico" style="border-color:${color};color:${color};">◉</div>`,
+        iconSize: [18, 18], iconAnchor: [9, 9], popupAnchor: [0, -10],
+    });
 }
 
 init();

@@ -32,7 +32,10 @@ def schedule_route(eng: Engineer, reqs: list[Request], dist: str = "haversine"):
     for req in reqs:
         pt = req_point(req)
         leg = ds.distance_km(cur, pt)
-        travel = ds.travel_minutes_km(leg, eng.transport)
+        if eng.speed_kph:
+            travel = ds.travel_minutes_speed(leg, eng.speed_kph)
+        else:
+            travel = ds.travel_minutes_km(leg, eng.transport)
         arrival = time_min + travel
         wstart = ds.parse_hhmm(req.window_start)
         wend = ds.parse_hhmm(req.window_end)
