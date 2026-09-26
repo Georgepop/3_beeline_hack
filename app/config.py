@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     region: str = "vostok"
 
     osrm_url: str = "https://router.project-osrm.org"
+    osrm_enabled: bool = True             # полилинии по дорогам для карты; False = прямые линии
+    osrm_timeout: int = 15
     nominatim_url: str = "https://nominatim.openstreetmap.org"
     # API коллеги (данные по точкам и модели инженеров) — источник data_source=remote.
     remote_base_url: str = "http://85.198.65.126:8000"

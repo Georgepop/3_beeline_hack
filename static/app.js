@@ -25,6 +25,12 @@ const state = {
     layerGroup: null,
     lines: {},         // engineer index -> L.polyline
     rid2eng: {},       // request_id -> {engIdx, stop}
+    reqMarkers: {},    // request_id -> L.marker (справочная заявка источника)
+    showRequests: true,   // чекбокс «Заявки на карте»
+    viewMode: 'all',      // 'all' | 'single'
+    selectedEng: null,    // индекс выбранного инженера
+    hiddenStatuses: new Set(), // статусы, скрытые в легенде
+    legendList: [],       // статусы для легенды
     lastScenario: null,
 };
 
@@ -157,6 +163,9 @@ async function loadPlan() {
         state.requests = requests;
         state.engineers = engineers;
         state.lastScenario = null;
+        state.selectedEng = null;
+        state.hiddenStatuses = new Set();
+        state.legendList = [...new Set(requests.map(r => r.status).filter(Boolean))];
         renderAll();
     } catch (e) {
         toast('Ошибка плана: ' + e.message, 'error');
@@ -205,9 +214,53 @@ function renderDynamicPanel() {
 function renderAll() {
     if (!state.plan) return;
     renderStats();
+    renderMapTools();
     renderMap();
     renderDynamicPanel();
     renderSectionMain(currentSection());
+}
+
+// ===== Инструменты карты =====
+function renderMapTools() {
+    const box = $('mapTools');
+    if (!box) return;
+    const withStatus = state.requests.some(r => r.status);
+    const legend = (withStatus && state.showRequests)
+        ? ' <span class="mt-sep"></span><span class="mt-label">Статусы:</span>' +
+          state.legendList.map((st, i) =>
+              `<span class="legend-chip${state.hiddenStatuses.has(st) ? ' off' : ''}" onclick="toggleStatus(${i})" style="color:${STATUS_COLORS[st] || STATUS_DEFAULT}">${esc(st)}</span>`).join('')
+        : '';
+    box.innerHTML =
+        `<label class="mt-check"><input type="checkbox" id="showReq"${state.showRequests ? ' checked' : ''} onchange="toggleRequests(this.checked)"> Заявки на карте</label>` +
+        `<span class="mt-sep"></span><span class="mt-label">Маршруты:</span>` +
+        `<label class="mt-radio"><input type="radio" name="viewMode" value="all"${state.viewMode === 'all' ? ' checked' : ''} onchange="setViewMode('all')"> Все</label>` +
+        `<label class="mt-radio"><input type="radio" name="viewMode" value="single"${state.viewMode === 'single' ? ' checked' : ''} onchange="setViewMode('single')"> Один инженер</label>` +
+        legend +
+        (state.viewMode === 'single' && state.selectedEng == null
+            ? '<span class="mt-hint">— выберите инженера в списке</span>' : '');
+}
+
+function syncMapTools() {
+    renderMapTools();
+    renderMap();
+}
+
+function toggleRequests(on) {
+    state.showRequests = on;
+    syncMapTools();
+}
+
+function setViewMode(m) {
+    state.viewMode = m;
+    syncMapTools();
+}
+
+function toggleStatus(i) {
+    const st = state.legendList[i];
+    if (!st) return;
+    if (state.hiddenStatuses.has(st)) state.hiddenStatuses.delete(st);
+    else state.hiddenStatuses.add(st);
+    syncMapTools();
 }
 
 // ===== Статистика =====
@@ -226,76 +279,92 @@ function renderMap() {
     state.layerGroup.clearLayers();
     state.lines = {};
     state.rid2eng = {};
+    state.reqMarkers = {};
     const plan = state.plan;
+    const singleIdx = state.viewMode === 'single'
+        ? (state.selectedEng != null && state.selectedEng < plan.engineers.length ? state.selectedEng : null)
+        : null;
 
     const allBounds = [];
+    const displayed = new Set();
+
     plan.engineers.forEach((eng, idx) => {
+        if (singleIdx != null && idx !== singleIdx) return;
         const color = COLORS[idx % COLORS.length];
-        const pts = [eng.start, ...eng.stops.map(s => ({ lat: s.lat, lng: s.lng }))];
-        const line = L.polyline(pts.map(p => [p.lat, p.lng]), {
-            color, weight: 3, opacity: 0.85, dashArray: null,
+        // Дороги из OSRM (eng.route) или прямая линия как раньше.
+        const linePts = (Array.isArray(eng.route) && eng.route.length > 1)
+            ? eng.route
+            : [eng.start, ...eng.stops.map(s => [s.lat, s.lng])];
+        const highlighted = singleIdx == null && state.selectedEng === idx;
+        const line = L.polyline(linePts.map(p => [p[0], p[1]]), {
+            color, weight: highlighted ? 6 : 3, opacity: 0.85,
         }).addTo(state.layerGroup);
+        line.on('click', () => focusEngineer(idx));
+        line.bindTooltip(
+            `Инженер ${idx + 1} · ${eng.stops.length} заявок · ${eng.km.toFixed(1)} км`,
+            { sticky: true, direction: 'top', offset: [0, -6], className: 'route-tip' });
         state.lines[idx] = line;
         allBounds.push(...line.getLatLngs());
 
-        const stopPts = [eng.start, ...eng.stops];
-        stopPts.forEach((p, i) => {
-            if (i === 0) {
-                L.marker([p.lat, p.lng], { icon: officeIcon() })
-                    .addTo(state.layerGroup)
-                    .bindPopup(`<b>🏢 Офис (старт)</b><br>${esc(p.name || '')}`);
-                return;
-            }
-            const st = eng.stops[i - 1];
+        L.marker([eng.start.lat, eng.start.lng], { icon: officeIcon() })
+            .addTo(state.layerGroup)
+            .bindPopup(`<b>🏢 Офис (${esc(plan.region_name)})</b><br>${esc(eng.start.name || '')}`);
+
+        eng.stops.forEach(st => {
+            displayed.add(st.request_id);
             const req = planRid2Req(st.request_id);
-            L.marker([st.lat, st.lng], {
-                icon: stopIcon(color, String(st.step)),
-            }).addTo(state.layerGroup).bindPopup(
-                `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
-                `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
-                `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
-                `Инженер: <b>${esc(eng.name)}</b> (${esc(eng.transport_label)})<br>` +
-                (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : ''), { maxWidth: 320 });
+            L.marker([st.lat, st.lng], { icon: stopIcon(color, String(st.step)) })
+                .addTo(state.layerGroup).bindPopup(
+                    `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
+                    `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
+                    `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
+                    `Инженер: <b>${esc(eng.name)}</b> (${esc(eng.transport_label)})<br>` +
+                    (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : ''), { maxWidth: 320 });
             state.rid2eng[st.request_id] = { engIdx: idx, stop: st };
         });
     });
 
-    // Неназначенные
+    // Неназначенные (всегда видны)
     plan.unassigned.forEach(u => {
         const req = planRid2Req(u.request_id);
         if (!req || req.lat == null) return;
+        displayed.add(u.request_id);
         L.marker([req.lat, req.lng], { icon: unassignedIcon() })
             .addTo(state.layerGroup)
             .bindPopup(`<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
     });
 
-    // Все точки (справочно) — цветом по статусу; запланированные не дублируем.
-    const displayed = new Set();
-    plan.engineers.forEach(eng => eng.stops.forEach(s => displayed.add(s.request_id)));
-    plan.unassigned.forEach(u => displayed.add(u.request_id));
-    state.requests.forEach(req => {
-        if (displayed.has(req.id)) return;
-        if (req.lat == null) return;
-        const color = STATUS_COLORS[req.status] || STATUS_DEFAULT;
-        L.marker([req.lat, req.lng], { icon: statusIcon(color, req.status) })
-            .addTo(state.layerGroup)
-            .bindPopup(
-                `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>Статус: <b>${esc(req.status || '—')}</b>` +
-                (req.control_brigade ? `<br>Контроль: ${esc(req.control_brigade)}` : '') +
-                (req.gigabit ? '<br>Гигабитное подключение' : ''), { maxWidth: 320 });
-    });
+    // Все заявки источника (чекбокс «Заявки на карте») — не дублируем показанные.
+    if (state.showRequests) {
+        state.requests.forEach(req => {
+            if (displayed.has(req.id) || req.lat == null) return;
+            if (state.hiddenStatuses.has(req.status)) return;
+            const color = STATUS_COLORS[req.status] || STATUS_DEFAULT;
+            const m = L.marker([req.lat, req.lng], { icon: statusIcon(color) })
+                .addTo(state.layerGroup)
+                .bindPopup(
+                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>Статус: <b>${esc(req.status || '—')}</b>` +
+                    (req.control_brigade ? `<br>Контроль: ${esc(req.control_brigade)}` : '') +
+                    (req.gigabit ? '<br>Гигабитное подключение' : ''), { maxWidth: 320 });
+            state.reqMarkers[req.id] = m;
+        });
+    }
 
-    if (allBounds.length) state.map.fitBounds(L.latLngBounds(allBounds).pad(0.15));
+    if (singleIdx != null && state.lines[singleIdx]) {
+        state.map.fitBounds(state.lines[singleIdx].getBounds().pad(0.25));
+    } else if (allBounds.length) {
+        state.map.fitBounds(L.latLngBounds(allBounds).pad(0.15));
+    }
 }
 
 function renderRoutesPanel() {
     const plan = state.plan;
     if (!plan || !plan.engineers.length) return '<div class="panel-title">Маршруты</div><div class="item-meta">План пуст</div>';
-    let html = '<div class="panel-header"><div class="panel-title">📋 Маршруты</div></div><div class="items-list">';
+    let html = `<div class="panel-header"><div class="panel-title">📋 Маршруты</div><div class="item-meta">${plan.metrics.assigned_count} заявок · ${plan.metrics.engineers_used} инж.</div></div><div class="items-list">`;
     plan.engineers.forEach((eng, idx) => {
         const color = COLORS[idx % COLORS.length];
         html += `
-        <div class="item-card" onclick="focusEngineer(${idx})">
+        <div class="item-card${state.selectedEng === idx ? ' selected' : ''}" onclick="focusEngineer(${idx})">
             <div class="item-header">
                 <div class="item-icon" style="background:${color}22;color:${color};">${idx + 1}</div>
                 <div class="item-title">${esc(eng.name)}</div>
@@ -313,12 +382,39 @@ function renderRoutesPanel() {
 }
 
 function focusEngineer(idx) {
+    const plan = state.plan;
+    if (!plan || idx == null || idx >= plan.engineers.length) return;
+    state.selectedEng = idx;
+    renderMap();
+    renderDynamicPanel();
+    renderSectionMain(currentSection());
     const line = state.lines[idx];
-    if (!line) return;
-    Object.entries(state.lines).forEach(([i, l]) => {
-        l.setStyle(i == idx ? { weight: 7, opacity: 1 } : { weight: 2, opacity: 0.45 });
-    });
-    state.map.fitBounds(line.getBounds().pad(0.2));
+    if (line) state.map.fitBounds(line.getBounds().pad(0.2));
+}
+
+// Переход на карту маршрутов и показ маршрута инженера (клик из вкладки «Инженеры»)
+function showEngineerOnMap(idx) {
+    focusEngineer(idx);
+    switchSection('routes', null);
+}
+
+// Показать заявку на карте: назначенную — её маршрут; остальные — точку-статус.
+function showRequestOnMap(id, ev) {
+    if (ev) ev.stopPropagation();
+    switchSection('routes', null);
+    const hit = state.rid2eng[id];
+    if (hit) { focusEngineer(hit.engIdx); return; }
+    if (!state.showRequests) {
+        state.showRequests = true;
+        renderMapTools();
+        renderMap();
+    }
+    const req = planRid2Req(id);
+    if (req && req.lat != null) {
+        const m = state.reqMarkers[id];
+        if (m) state.map.flyTo(m.getLatLng(), 15);
+        else state.map.flyTo([req.lat, req.lng], 15);
+    }
 }
 
 // ===== Заявки =====
@@ -347,6 +443,7 @@ function renderRequests() {
                 <div class="item-icon" style="background:#e8f5f0;color:#2d9c7a;">✓</div>
                 <div class="item-title">${esc(s.request_id)} — ${esc(s.address)}</div>
                 <div class="status status-done">${esc(s.window[0])}–${esc(s.window[1])}</div>
+                <button class="map-btn" onclick="showRequestOnMap('${esc(s.request_id)}', event)">Карта</button>
             </div>
             <div class="item-meta">
                 <span>👤 ${esc(s.eng.name)}</span>
@@ -366,6 +463,7 @@ function renderRequests() {
                 <div class="item-icon" style="background:#fde8e8;color:#e74c3c;">✕</div>
                 <div class="item-title">${esc(u.request_id)} — ${esc(u.address)}</div>
                 <div class="status status-error">не назначена</div>
+                <button class="map-btn" onclick="showRequestOnMap('${esc(u.request_id)}', event)">Карта</button>
             </div>
             <div class="item-meta">
                 <span>⚠ ${esc(u.reason)}</span>
@@ -388,6 +486,7 @@ function renderRequests() {
                     <div class="item-icon" style="background:#eef2f5;color:#90a4ae;">·</div>
                     <div class="item-title">${esc(r.id)} — ${esc(r.address)}</div>
                     <div class="status status-pending">${statusChip(r.status)}</div>
+                    <button class="map-btn" onclick="showRequestOnMap('${esc(r.id)}', event)">Карта</button>
                 </div>
                 <div class="item-meta">
                     <span>${esc(r.skill_label)} ${esc(r.bk_type)}</span>
@@ -419,7 +518,7 @@ function renderEngineers() {
         const stops = inPlan ? plan.engineers[idx].stops : [];
         const km = inPlan ? plan.engineers[idx].km : 0;
         html += `
-        <div class="item-card">
+        <div class="item-card${inPlan && state.selectedEng === idx ? ' selected' : ''}" ${inPlan ? `onclick="showEngineerOnMap(${idx})"` : ''}>
             <div class="item-header">
                 <div class="item-icon" style="background:${inPlan ? '#e8f5f0' : '#f0f4f8'};color:${inPlan ? '#2d9c7a' : '#95a5a6'};">${inPlan ? '✓' : '—'}</div>
                 <div class="item-title">${esc(e.name)}</div>

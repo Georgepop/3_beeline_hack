@@ -41,7 +41,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .item-card:hover { border-color: #2d9c7a; box-shadow: 0 2px 8px rgba(45, 156, 122, 0.12); }
 .item-card.active { border-color: #2d9c7a; box-shadow: 0 0 0 2px rgba(45, 156, 122, 0.18); }
+.item-card.selected { border-color: #2d9c7a; box-shadow: 0 0 0 1px #2d9c7a; }
 .item-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.map-btn { margin-left: auto; background: #eef2f5; border: 1px solid #dce1e6; border-radius: 6px; padding: 2px 9px; font-size: 11px; color: #34495e; cursor: pointer; flex-shrink: 0; }
+.map-btn:hover { background: #e3f2ec; border-color: #2d9c7a; color: #2d9c7a; }
 .item-icon {
     width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
@@ -167,3 +170,23 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .leaflet-popup-content { font-size: 12px; line-height: 1.5; }
 .leaflet-popup-content b { font-weight: 700; }
+
+/* ===== Инструменты карты ===== */
+.map-tools {
+    position: absolute; top: 12px; left: 12px; z-index: 1100;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    background: rgba(255, 255, 255, 0.93); border: 1px solid #e3e8ee; border-radius: 10px;
+    padding: 8px 12px; font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    max-width: calc(100% - 60px);
+}
+.map-tools .mt-check, .map-tools .mt-radio { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: #34495e; white-space: nowrap; }
+.map-tools input { cursor: pointer; }
+.map-tools .mt-sep { width: 1px; height: 14px; background: #dce1e6; }
+.map-tools .mt-label { color: #7f8c8d; white-space: nowrap; }
+.map-tools .mt-hint { color: #2d9c7a; white-space: nowrap; }
+.legend-chip {
+    cursor: pointer; padding: 2px 8px; border: 1px solid currentColor; border-radius: 20px;
+    opacity: 0.92; line-height: 1.4; white-space: nowrap; background: #fff;
+}
+.legend-chip.off { opacity: 0.35; text-decoration: line-through; }
+.route-tip { font-size: 11px; line-height: 1.3; }

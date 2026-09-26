@@ -59,6 +59,7 @@ class Engineer(BaseModel):
     shift_start: str = "08:00"
     shift_end: str = "20:00"
     start: LatLng = Field(default_factory=LatLng)
+    route: Optional[list[list[float]]] = None  # полилиния по дорогам [[lat,lng],…]; None = рисовать прямую
     stops: list[RoadStop] = []
     km: float = 0.0
     minutes: int = 0

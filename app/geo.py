@@ -73,9 +73,14 @@ DISTRICT_CENTERS: dict[str, tuple[float, float]] = {
 
 
 def normalize_address(address: str) -> str:
-    a = re.sub(r"(?i)^г\.?\s*Москва\s*,?\s*", "", address.strip())
+    a = address.strip()
+    # Срезаем ведущие населённые пункты: «Город Москва, …», «г. Москва, …», «Москва, …»
+    a = re.sub(r"(?i)^(г(ород)?\.?\s*)?москва[\s,]+", "", a)
     a = re.sub(r"\s+", " ", a)
     a = re.sub(r"(?i)\bд\.?\s*", " ", a)                # "д 83" -> "83"
+    a = re.sub(r"(?i)\bстр(оение)?\.?\s*(\d+)", r"с\2", a)    # "стр. 2"/"стр2" -> "с2"
+    a = re.sub(r"(?i)\bкорп(ус)?\.?\s*(\d+)", r"к\2", a)      # "корп. 4" -> "к4"
+    a = re.sub(r"(?i)\bк\.?\s*(\d+)", r"к\1", a)        # "к 4" -> "к4"
     a = re.sub(r"([0-9])\s*([сСкК])\s*([0-9])", r"\1\2\3", a)  # "83с 4" -> "83с4"
     a = re.sub(r"(?i)\bс\b", " ", a)
     return re.sub(r"\s+", " ", a).strip()
