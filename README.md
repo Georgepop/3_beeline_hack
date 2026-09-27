@@ -38,6 +38,7 @@ FastAPI + Pydantic, SQLAlchemy (SQLite по умолчанию, Postgres — о�
 py -3 -m venv .venv                  # Windows
 .venv\Scripts\activate               # PowerShell
 pip install -r requirements.txt
+pip install -r requirements-benchmark.txt   # по желанию: режим-бенчмарк OR-Tools
 
 $env:PYTHONUNBUFFERED = "1"
 py -m app.data_source build          # собрать данные (геокодинг ~4–5 мин)
@@ -70,6 +71,11 @@ docker compose up --build
 | `OSRM_TIMEOUT` | `15` | таймаут запросов к OSRM (сек) |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | также `postgresql+psycopg://...` |
 | `SHIFT_START` / `SHIFT_END` | `08:00` / `20:00` | смена инженеров (не применяется для remote) |
+| `ORTOOLS_TIME_LIMIT` | `5` | лимит поиска бенчмарка, сек |
+| `ORTOOLS_DROP_PENALTY` | `100000` | штраф за невыполненную заявку (мин) |
+| `ORTOOLS_FIXED_VEHICLE_COST` | `45` | плата за каждого задействованного инженера, мин |
+| `ORTOOLS_FIRST_SOLUTION` | `parallel_cheapest_insertion` | стратегия первого решения |
+| `ORTOOLS_LOCAL_SEARCH` | `guided_local_search` | локальный поиск |
 
 ## API (контракт)
 
@@ -122,6 +128,47 @@ finish/window), `unassigned[]` (с причиной), `metrics`, `comparison`
 - Критерии (порядок): больше назначенных → меньше бригад → меньше пробега.
 - Контрольное распределение — ориентир, а не обязательное совпадение.
 
+## Бенчмарк: OR-Tools (`benchmark_ortools`)
+
+Третий режим в селекторе алгоритмов — план на OR-Tools Routing (`app/solvers/ortools_solver.py`).
+Ставится отдельно, чтобы демо работало и без него:
+
+```bash
+pip install -r requirements-benchmark.txt
+```
+
+Без пакета пункт в селекторе остаётся, но невыбираемым, а `/api/plan?mode=benchmark_ortools`
+отдаёт 503 с подсказкой (раньше режим молча подменялся на `improved` — теперь нельзя).
+
+Модель: единый склад (офис), заявки — узлы с жёсткими окнами, каждая — опциональна
+со штрафом `ORTOOLS_DROP_PENALTY`; инженеры — машины, совместимость по навыку и
+транспорту через `VehicleVar`; возврата в офис нет. Целевая функция — **минуты**:
+время в пути + плата `ORTOOLS_FIXED_VEHICLE_COST` за каждого реально задействованного
+инженера, поэтому дуги инженеров на разном транспорте сравнимы между собой.
+Планирование — те же нормативы, окна и скорости, что в `improved`, поэтому таймлайны
+сопоставимы до минуты.
+
+Замеры на синтетике (haversine, смена 08:00–20:00):
+
+| Регион | Режим | Назначено | Бригад | Пробег, км | Время, мин |
+|---|---|---|---|---|---|
+| Юго-центр | `improved` | 48 | 11 | 170.7 | 7655 |
+| Юго-центр | `benchmark_ortools` | 46 | 8 | 132.9 | 5559 |
+| Юго-восток | `improved` | 62 | 12 | 582.1 | 8047 |
+| Юго-восток | `benchmark_ortools` | 61 | 11 | 395.9 | 7244 |
+| Восток | `improved` | 57 | 12 | 212.3 | 8320 |
+| Восток | `benchmark_ortools` | 56 | 10 | 175.4 | 6716 |
+
+Вывод: OR-Tools решает ту же задачу, тратя на 20–30 % меньше времени и пробега и
+обходясь меньшим числом бригад, но при этом оставляет на 1–2 заявки больше
+(время в смене упирается в потолок, а не в число точек). Это и есть аргумент
+для следующей итерации: добавить «стоимость невыполненной заявки» как явный
+бизнес-вес и балансировать его против лишних бригад.
+
+Оговорки: в ortools 9.15 у `RoutingSearchParameters` нет поля seed, поэтому между
+запусками результат может отличаться на 1–2 заявки; лимит поиска (`ORTOOLS_TIME_LIMIT`,
+по умолчанию 5 с) — главный рычаг качества/скорости.
+
 ## Структура
 
 ```
@@ -134,7 +181,7 @@ app/
   data_source.py    парсер CSV → app/parsed/…json
   remote_source.py  источник «API коллеги» (points/eng) → app/parsed/remote_…json
   planner.py        диспетчер данных + солверов + сравнение
-  solvers/          реестр солверов; core.py (маршрут), fifo.py, improved.py
+  solvers/          реестр солверов; core.py (маршрут), fifo.py, improved.py, ortools_solver.py (бенчмарк)
   api.py            FastAPI-роуты
   mock.py, random_gen_utils.py   демо-данные для DATA_SOURCE=mock
 static/             фронт (index.html, app.js, style.css)

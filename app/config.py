@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     shift_start: str = "08:00"
     shift_end: str = "20:00"
 
+    # Бенчмарк OR-Tools (requirements-benchmark.txt). Цель — минуты: плата за
+    # каждого реально задействованного инженера + штраф за пропуск заявки.
+    ortools_time_limit: int = 5        # лимит поиска, сек
+    ortools_drop_penalty: int = 100000  # штраф за невыполненную заявку (избыточно большой)
+    ortools_fixed_vehicle_cost: int = 45  # плата за инженера в минутах
+    ortools_slack_max: int = 1440        # максимум ожидания до начала окна, мин
+    # Стратегии поиска (имя поля в routing_enums_pb2, регистр не важен)
+    ortools_first_solution: str = "parallel_cheapest_insertion"
+    ortools_local_search: str = "guided_local_search"
+
     # Средние скорости по типу транспорта, км/ч (допущение, README).
     speed_kmh: dict[str, float] = {
         "auto": 30.0,

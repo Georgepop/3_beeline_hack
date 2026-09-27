@@ -157,13 +157,22 @@ function showMapHint(text) {
 // ===== Селектор алгоритмов (реестр на бэкенде: GET /api/solvers) =====
 async function fillSolvers() {
     let opts = [];
+    let ortools = null;   // серверный ответ по benchmark_ortools
     try {
         const solvers = await api('/api/solvers');
-        opts = solvers.map(s => `<option value="${esc(s.name)}">${esc(s.label)}</option>`);
+        ortools = solvers.find(s => s.name === 'benchmark_ortools') || null;
+        opts = solvers.map(s => {
+            const hint = s.enabled === false ? ' title="Требуется пакет ortools (см. requirements-benchmark.txt) — не установлен"' : '';
+            return `<option value="${esc(s.name)}"${s.enabled === false ? ' disabled' : ''}${hint}>${esc(s.label)}${s.enabled === false ? ' — не установлен' : ''}</option>`;
+        });
     } catch (e) {
         // бэкенд без /api/solvers (старый процесс) — фолбэк на известные алгоритмы
         opts = [`<option value="baseline_fifo">Базовый (FIFO)</option>`,
                 `<option value="improved">Улучшенный</option>`];
+    }
+    if (!ortools) {
+        // бэкенд не знает про режим или он выключен — показываем один невыбираемый пункт
+        opts.push(`<option value="benchmark_ortools" disabled title="Требуется пакет ortools (см. requirements-benchmark.txt) — не установлен">OR-Tools (бенчмарк) — не установлен</option>`);
     }
     $('mode').innerHTML = opts.join('');
     const chosen = String(state.mode || 'improved');
@@ -174,9 +183,6 @@ async function fillSolvers() {
     $('mode').value = chosen;
     if (!opts.length) $('mode').insertAdjacentHTML('beforeend',
         `<option value="improved" disabled>Алгоритмы не загрузились</option>`);
-    // OR-Tools не установлен — видим в списке, но выбрать нельзя (с подсказкой).
-    $('mode').insertAdjacentHTML('beforeend',
-        `<option value="benchmark_ortools" disabled title="Требуется пакет ortools (см. requirements-benchmark.txt) — не установлен, план считается improved">OR-Tools* — не установлен</option>`);
 }
 
 // ===== Настройки / пересчёт =====
@@ -818,7 +824,7 @@ function renderMetrics() {
         return;
     }
     const c = p.comparison || {};
-    const modeLabel = { baseline_fifo: 'Базовый (FIFO)', improved: 'Улучшенный' }[state.mode] || state.mode;
+    const modeLabel = { baseline_fifo: 'Базовый (FIFO)', improved: 'Улучшенный', benchmark_ortools: 'OR-Tools (бенчмарк)' }[state.mode] || state.mode;
     let html = '<div class="metrics-compare">';
     html += metricsTable('Наш план (' + modeLabel + ')', p.metrics, true);
     html += controlTable('Контрольное распределение* (бригады)', c.control);

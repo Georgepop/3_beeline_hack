@@ -26,7 +26,7 @@ from app.schemas import (
 SOLVER_LABELS = {
     "baseline_fifo": "Базовый (FIFO)",
     "improved": "Улучшенный",
-    "benchmark_ortools": "OR-Tools*",
+    "benchmark_ortools": "OR-Tools (бенчмарк)",
 }
 
 # Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
@@ -103,10 +103,11 @@ def create_app() -> FastAPI:
 
     @app.get("/api/solvers")
     def solvers():
+        from app.solvers import available as solver_available
         from app.solvers import names as solver_names
 
         return [
-            {"name": n, "label": SOLVER_LABELS.get(n, n), "enabled": True}
+            {"name": n, "label": SOLVER_LABELS.get(n, n), "enabled": solver_available(n)}
             for n in solver_names()
         ]
 
@@ -115,8 +116,15 @@ def create_app() -> FastAPI:
     def plan(region: RegionId = Query(default=_settings().region),
              mode: SolverMode = Query(default=_settings().solver_mode),
              dist: DistMode = Query(default=_settings().dist_mode)):
-        eff_mode = mode if mode != "benchmark_ortools" else "improved"  # бенчмарк не установлен
-        return planner.solve(region, eff_mode, dist)
+        from app.solvers import available as solver_available
+
+        if not solver_available(mode):
+            raise HTTPException(
+                status_code=503,
+                detail="Режим benchmark_ortools требует пакет ortools: "
+                       "pip install -r requirements-benchmark.txt",
+            )
+        return planner.solve(region, mode, dist)
 
     @app.post("/api/scenario", response_model=ScenarioResult)
     def scenario(ev: ScenarioEvent = Body(...),
