@@ -92,6 +92,81 @@ def clean_display_address(address: str) -> str:
     return re.sub(r"\s+", " ", a).strip()
 
 
+_TYPE_WORDS = {
+    "улица", "улицы", "улице", "проспект", "проспекта", "бульвар", "бульвара",
+    "проезд", "проезда", "шоссе", "набережная", "набережной", "переулок",
+    "площадь", "аллея", "линия", "квартал", "дом", "корпус", "строение", "город",
+}
+
+_ABBREV_TYPES = {"пр-кт": "проспект", "просп": "проспект", "б-р": "бульвар", "пр-д": "проезд", "наб": "набережная", "ш": "шоссе"}
+_ABBREV_EXPAND = re.compile(r"(?i)\b(пр-кт|просп|б-р|пр-д|наб|ш)(?![а-яё])\.?\s*")
+
+
+def _expand_abbrevs(a: str) -> str:
+    """Раскрываем сокращения типов улиц, которые Nominatim/Photon не понимают."""
+    a = _ABBREV_EXPAND.sub(lambda m: _ABBREV_TYPES[m.group(1).lower()] + " ", a)
+    return re.sub(r"\s+", " ", a).strip()
+
+
+def _split_city(address: str) -> tuple[str, str]:
+    """(населённый пункт, остаток). «Город Москва, …»/«Москва, …»/«Домодедово, …»"""
+    m = re.match(r"(?i)^(?:г(ород|\.)?\s*)?([а-яёa-z0-9 -]+?)[,\s]+(.+)$", address, re.S)
+    if not m:
+        return "Москва", re.sub(r"(?i)^(г(ород)?\.?\s*)?(город\s+)?москва[\s,]+", "", address)
+    return m.group(2).strip(), m.group(3).strip()
+
+
+def _split_house(rest: str) -> tuple[str, str]:
+    """(улица, номер дома). «пр-кт.60-летия Октября, д. 17» -> («пр-кт.60-летия Октября», «17»)"""
+    m = re.match(
+        r"(?is)^(.*?)[,\s]+(?:д\.\s*)?([0-9][0-9а-яёa-zA-Z]*(?:\s*[кК]\s?[0-9][0-9а-яёa-zA-Z]*)?)\s*$",
+        rest,
+    )
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return rest, ""
+
+
+def _query_variants(address: str) -> list[str]:
+    """Запросы к геокодерам в порядке предпочтения (для одного адреса)."""
+    city, rest = _split_city(address)
+    street, house = _split_house(rest)
+    qs = [f"{city}, {rest.strip(', ')}"]                       # как есть
+    qs.append(f"{city}, {_expand_abbrevs(rest.strip(', '))}")  # с раскрытыми сокращениями
+    if street:
+        # только улица + дом без «д.»/«к N» (номера корпусов часто ломают поиск)
+        qs.append(f"{city}, {_expand_abbrevs(street)}, {house}" if house else f"{city}, {_expand_abbrevs(street)}")
+    seen, out = set(), []
+    for q in qs:
+        if q not in seen:
+            seen.add(q)
+            out.append(q)
+    return out
+
+
+def _norm_tokens(s: str) -> set[str]:
+    s = (s or "").lower()
+    for w in _TYPE_WORDS:
+        s = re.sub(rf"(?<![а-яёa-z]{len(w)}){re.escape(w)}(?![а-яёa-z])", " ", s)
+    s = re.sub(r"[^a-zа-яё0-9]+", " ", s)
+    return {t for t in s.split() if t}
+
+
+def _street_matches(query: str, photon_street: str) -> bool:
+    """Совпала ли улица в ответе Photon с запрашиваемой (иначе это ложное срабатывание)."""
+    city, rest = _split_city(query)
+    street, _ = _split_house(rest)
+    a = _norm_tokens(street)
+    b = _norm_tokens(photon_street)
+    if not a or not b or len(a & b) == 0:
+        return False
+    da = {t for t in a if any(c.isdigit() for c in t)}
+    db = {t for t in b if any(c.isdigit() for c in t)}
+    if da and db and not (da & db):
+        return False
+    return True
+
+
 def _query_nominatim(q: str) -> list[float] | None:
     s = get_settings()
     try:
@@ -112,6 +187,27 @@ def _query_nominatim(q: str) -> list[float] | None:
     return None
 
 
+def _query_photon(q: str) -> tuple[list[float] | None, str]:
+    """Photon (бесплатный, без ключа) как дополнение к Nominatim. Вернёт ([lat,lng], street) или (None, '')."""
+    try:
+        r = requests.get(
+            "https://photon.komoot.io/api/",
+            params={"q": q, "limit": 1},
+            timeout=12,
+            headers={"User-Agent": "beeline-field-service/1.0 (hackathon)"},
+        )
+        if r.ok:
+            feat = (r.json().get("features") or [None])[0]
+            if feat:
+                c = feat["geometry"]["coordinates"]
+                return [float(c[1]), float(c[0])], feat["properties"].get("street") or ""
+    except Exception:
+        pass
+    finally:
+        time.sleep(0.3)
+    return None, ""
+
+
 def _district_fallback(address: str, district: str = "") -> list[float] | None:
     for name, coord in DISTRICT_CENTERS.items():
         if district and name.lower() in district.lower():
@@ -120,6 +216,30 @@ def _district_fallback(address: str, district: str = "") -> list[float] | None:
         if name.lower() in address.lower():
             return list(coord)
     return None
+
+
+_MOSCOW_CENTER = (55.7558, 37.6173)
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    import math
+
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _plausible(coord: list[float] | None, address: str) -> bool:
+    """Отбрасываем ложные срабатывания: «Москва, …» должно геокодиться в пределах Москвы."""
+    if not coord:
+        return False
+    city, _ = _split_city(address)
+    if city.lower() == "москва":
+        return _haversine_km(coord[0], coord[1], *_MOSCOW_CENTER) <= 65.0
+    return True
 
 
 def geocode(address: str, district: str = "") -> list[float] | None:
@@ -132,9 +252,17 @@ def geocode(address: str, district: str = "") -> list[float] | None:
 
     result = None
     if get_settings().geocoder == "nominatim":
-        result = _query_nominatim("Москва, " + normalize_address(stored_key))
-        if not result:
-            result = _query_nominatim(normalize_address(stored_key))
+        for q in _query_variants(stored_key):
+            result = _query_nominatim(q)
+            if result and _plausible(result, stored_key):
+                break
+            result = None
+    if not result and get_settings().geocoder == "nominatim":
+        for q in _query_variants(stored_key):
+            coord, p_street = _query_photon(q)
+            if coord and _street_matches(q, p_street) and _plausible(coord, stored_key):
+                result = coord
+                break
     if not result:
         result = _district_fallback(stored_key, district)
 
