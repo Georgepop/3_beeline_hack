@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from app.config import get_settings
-from app.geo import geocode
+from app.geo import clean_display_address, geocode
 from app.regions import (
     REGIONS,
     SKILLS,
@@ -88,7 +88,7 @@ def parse_requests(region: str, office_address: str) -> list[Request]:
             window_start=_time_hhmm(r[idx["Начало"]]),
             window_end=_time_hhmm(r[idx["Окончание"]]),
             district=district,
-            address=addr,
+            address=clean_display_address(addr),
             gigabit=gigabit,
             priority="urgent" if urgency_of(bk, hd) == "urgent" else "normal",
             duration_min=norm_min(bk),

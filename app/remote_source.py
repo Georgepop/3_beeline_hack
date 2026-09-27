@@ -24,6 +24,7 @@ import requests
 
 from app.config import get_settings
 from app.distance import to_hhmm
+from app.geo import clean_display_address
 from app.regions import REGIONS, SKILLS, norm_min, urgency_of
 from app.schemas import Engineer, LatLng, Request
 
@@ -86,7 +87,7 @@ def map_request(p: dict) -> Request:
         window_start=ws,
         window_end=we or "23:59",
         district=p.get("district") or "",
-        address=p.get("address") or "",
+        address=clean_display_address(p.get("address") or ""),
         tech=p.get("Подключение") or None,
         gigabit=bool(p.get("gigabit_connection")),
         priority=urgency_of(bk, p.get("request_type_hd") or ""),
