@@ -151,7 +151,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
     .stats-row { grid-template-columns: 1fr 1fr; }
 }
 
-/* ===== Leaflet markers ===== */
+/* ===== MapLibre маркеры/попапы ===== */
 .stop-ico, .office-ico, .un-ico {
     background: white; border-radius: 50%; border: 2px solid;
     width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
@@ -168,8 +168,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
     display: inline-block; padding: 1px 6px; border-radius: 10px;
     border: 1px solid; font-size: 11px; line-height: 1.4;
 }
-.leaflet-popup-content { font-size: 12px; line-height: 1.5; }
-.leaflet-popup-content b { font-weight: 700; }
+.maplibregl-popup-content { font-size: 12px; line-height: 1.5; }
+.maplibregl-popup-content b { font-weight: 700; }
+.ml-tip .maplibregl-popup-tip { display: none; }
+.ml-tip .maplibregl-popup-content {
+    background: #2c3e50; color: #fff; padding: 4px 10px;
+    border-radius: 6px; font-size: 11px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
 
 /* ===== Инструменты карты (под картой) ===== */
 .map-tools {
@@ -190,8 +195,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
     opacity: 0.92; line-height: 1.4; white-space: nowrap; background: #fff;
 }
 .legend-chip.off { opacity: 0.35; text-decoration: line-through; }
-.route-tip { font-size: 11px; line-height: 1.3; }
-
 /* ===== Маршрут выбранного инженера по шагам ===== */
 .route-steps { margin-top: 10px; background: #fff; border: 1px solid #e3e8ee; border-radius: 10px; padding: 12px 14px; font-size: 14px; }
 .route-steps-empty { color: #7f8c8d; padding: 4px 0; }

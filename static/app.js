@@ -12,6 +12,21 @@ const STATUS_COLORS = {
 };
 const STATUS_DEFAULT = '#b0bec5';
 const DONE_STATUSES = ['Выполнена', 'Отменена'];
+const MAP_STYLE = {
+    version: 8,
+    sources: {
+        osm: {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: '&copy; OpenStreetMap'
+        }
+    },
+    layers: [
+        { id: 'osm', type: 'raster', source: 'osm' }
+    ]
+};
 
 const state = {
     region: 'vostok',
@@ -23,10 +38,12 @@ const state = {
     requests: [],      // Request[]
     engineers: [],     // Engineer[]
     map: null,
-    layerGroup: null,
-    lines: {},         // engineer index -> L.polyline
+    popup: null,       // maplibre popup (клик по точке)
+    tip: null,         // maplibre popup (тултип маршрута на наведении)
+    markers: [],       // DOM-маркеры (maplibregl.Marker)
+    lineCoords: {},    // engineer index -> [[lng,lat],...]
     rid2eng: {},       // request_id -> {engIdx, stop}
-    reqMarkers: {},    // request_id -> L.marker (справочная заявка источника)
+    reqPoints: {},     // request_id -> [lng, lat]
     showAllRequests: true,   // «Показывать все заявки» (все маршруты — принудительно вкл.)
     showUnassigned: false,   // «Показывать неназначенные»
     showDone: false,         // «Показывать выполненные» (Выполнена/Отменена)
@@ -89,12 +106,44 @@ async function init() {
 
 function initMap() {
     if (state.map) return;
-    state.map = L.map('mainMap').setView([55.68, 37.70], 11);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 18,
-        attribution: '© OpenStreetMap',
-    }).addTo(state.map);
-    state.layerGroup = L.layerGroup().addTo(state.map);
+    state.map = new maplibregl.Map({
+        container: 'mainMap',
+        style: MAP_STYLE,
+        center: [37.70, 55.68],
+        zoom: 11,
+        attributionControl: false,
+    });
+    state.map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
+    state.map.addControl(new maplibregl.AttributionControl({ compact: true }));
+    state.popup = new maplibregl.Popup({ closeButton: false, maxWidth: '340px', offset: 12 });
+    state.tip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'ml-tip' });
+    state.map.on('load', () => {
+        state.map.addSource('routes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        state.map.addLayer({
+            id: 'route-lines', type: 'line', source: 'routes',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': ['get', 'color'], 'line-width': ['get', 'w'], 'line-opacity': 0.85 },
+        });
+        state.map.on('click', 'route-lines', (e) => {
+            const p = e.features[0].properties;
+            if (p && p.engIdx != null) focusEngineer(p.engIdx);
+        });
+        state.map.on('mousemove', 'route-lines', (e) => {
+            state.map.getCanvas().style.cursor = 'pointer';
+            const p = e.features[0].properties;
+            if (p && p.tip) {
+                if (state.tip._html !== p.tip) { state.tip.setHTML(p.tip); state.tip._html = p.tip; }
+                state.tip.setLngLat(e.lngLat);
+                if (!state.tipShown) { state.tip.addTo(state.map); state.tipShown = true; }
+            }
+        });
+        state.map.on('mouseleave', 'route-lines', () => {
+            state.map.getCanvas().style.cursor = '';
+            state.tip.remove();
+            state.tipShown = false;
+        });
+        if (state.plan) renderMap();
+    });
 }
 
 function showMapHint(text) {
@@ -182,7 +231,7 @@ function switchSection(section, el) {
     $('section-' + section).classList.add('active');
     $('pageTitle').textContent = { routes: 'Маршруты', requests: 'Заявки', engineers: 'Инженеры', metrics: 'Метрики и сравнение', scenarios: 'Сценарии перепланирования' }[section];
     renderDynamicPanel();
-    if (section === 'routes' && state.map) setTimeout(() => state.map.invalidateSize(), 80);
+    if (section === 'routes' && state.map) setTimeout(() => state.map.resize(), 80);
     renderSectionMain(section);
 }
 
@@ -217,7 +266,7 @@ function renderAll() {
     if (!state.plan) return;
     renderStats();
     renderMapTools();
-    renderMap();
+    renderMap(true);
     renderDynamicPanel();
     renderSectionMain(currentSection());
 }
@@ -280,10 +329,10 @@ function renderRouteSteps() {
 
 function focusStop(id) {
     const hit = state.rid2eng[id];
-    if (hit && hit.stop) state.map.flyTo([hit.stop.lat, hit.stop.lng], 15);
+    if (hit && hit.stop) state.map.flyTo({ center: [hit.stop.lng, hit.stop.lat], zoom: 15, duration: 800 });
     else {
         const req = planRid2Req(id);
-        if (req && req.lat != null) state.map.flyTo([req.lat, req.lng], 15);
+        if (req && req.lat != null) state.map.flyTo({ center: [req.lng, req.lat], zoom: 15, duration: 800 });
     }
 }
 
@@ -325,7 +374,96 @@ function renderStats() {
     $('statUnassigned').textContent = m.unassigned_count;
 }
 
-// ===== Карта =====
+// ===== Карта (MapLibre GL) =====
+// Маршруты — GeoJSON-слой «line», точки — DOM-маркеры (maplibregl.Marker).
+
+function _clearPoints() {
+    for (const k in (state.markerPool || {})) state.markerPool[k].stale = true;
+}
+
+function _prunePoints() {
+    for (const k in (state.markerPool || {})) {
+        if (state.markerPool[k].stale) {
+            state.markerPool[k].m.remove();
+            delete state.markerPool[k];
+        }
+    }
+}
+
+function _addPoint(key, lng, lat, html, popupHtml) {
+    if (!state.markerPool) state.markerPool = {};
+    let rec = state.markerPool[key];
+    if (!rec) {
+        const el = document.createElement('div');
+        el.style.cursor = 'pointer';
+        const m = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(state.map);
+        rec = { m, el, key };
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (rec.popupHtml) state.popup.setLngLat(rec.lngLat).setHTML(rec.popupHtml).addTo(state.map);
+        });
+        state.markerPool[key] = rec;
+    }
+    rec.stale = false;
+    rec.lngLat = [lng, lat];
+    rec.m.setLngLat([lng, lat]);
+    if (rec.html !== html) { rec.html = html; rec.el.innerHTML = html; }
+    rec.popupHtml = popupHtml;
+    return rec.m;
+}
+
+function _setRoutes(features) {
+    const src = state.map && state.map.getSource('routes');
+    if (src) src.setData({ type: 'FeatureCollection', features });
+}
+
+function fitCoords(coords, pad) {
+    if (!coords || !coords.length) return;
+    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+    coords.forEach(c => {
+        if (c[0] < minLng) minLng = c[0];
+        if (c[1] < minLat) minLat = c[1];
+        if (c[0] > maxLng) maxLng = c[0];
+        if (c[1] > maxLat) maxLat = c[1];
+    });
+    const dLng = (maxLng - minLng) * (pad || 0.15);
+    const dLat = (maxLat - minLat) * (pad || 0.15);
+    state.map.fitBounds([[minLng - dLng, minLat - dLat], [maxLng + dLng, maxLat + dLat]], { duration: 600 });
+}
+
+function _lineCoords(eng) {
+    const pts = (Array.isArray(eng.route) && eng.route.length > 1)
+        ? eng.route
+        : [eng.start, ...eng.stops.map(s => ({ lat: s.lat, lng: s.lng }))];
+    return pts.map(p => Array.isArray(p) ? [p[1], p[0]] : [p.lng, p.lat]);
+}
+
+function _routeFeature(eng, idx, highlighted) {
+    return {
+        type: 'Feature',
+        properties: {
+            color: COLORS[idx % COLORS.length],
+            w: highlighted ? 6 : 3,
+            engIdx: idx,
+            tip: `Инженер ${idx + 1} · ${eng.stops.length} заявок · ${eng.km.toFixed(1)} км`,
+        },
+        geometry: { type: 'LineString', coordinates: _lineCoords(eng) },
+    };
+}
+
+function _stopPopup(st, eng) {
+    const req = planRid2Req(st.request_id);
+    return `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
+        `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
+        `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
+        `Инженер: <b>${esc(eng.name)}</b> (${esc(eng.transport_label)})<br>` +
+        (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : '');
+}
+
+function _officePopup(plan, start) {
+    return `<b>🏢 Офис (${esc(plan.region_name)})</b><br>${esc(start.name || '')}`;
+}
+
 // «Все заявки» при выбранном инженере: его маршрут и точки как раньше,
 // остальные заявки — точками в цвете их инженера (неназначенные — серые).
 function drawAssignmentLayer(plan, idx) {
@@ -337,34 +475,17 @@ function drawAssignmentLayer(plan, idx) {
     const selEng = plan.engineers[idx];
     const color = COLORS[idx % COLORS.length];
 
-    // Маршрут и точки выбранного инженера — как обычно.
-    const linePts = (Array.isArray(selEng.route) && selEng.route.length > 1)
-        ? selEng.route
-        : [selEng.start, ...selEng.stops.map(s => [s.lat, s.lng])];
-    const line = L.polyline(linePts.map(p => [p[0], p[1]]), {
-        color, weight: 3, opacity: 0.85,
-    }).addTo(state.layerGroup);
-    line.bindTooltip(
-        `Инженер ${idx + 1} · ${selEng.stops.length} заявок · ${selEng.km.toFixed(1)} км`,
-        { sticky: true, direction: 'top', offset: [0, -6], className: 'route-tip' });
-    state.lines[idx] = line;
+    _setRoutes([_routeFeature(selEng, idx, false)]);
+    state.lineCoords[idx] = _lineCoords(selEng);
 
-    L.marker([selEng.start.lat, selEng.start.lng], { icon: officeIcon() })
-        .addTo(state.layerGroup)
-        .bindPopup(`<b>🏢 Офис (${esc(plan.region_name)})</b><br>${esc(selEng.start.name || '')}`);
+    _addPoint('ofc-' + idx, selEng.start.lng, selEng.start.lat, officeIconHtml(), _officePopup(plan, selEng.start));
 
     const shownStops = new Set();
     selEng.stops.forEach(st => {
         shownStops.add(st.request_id);
-        const req = planRid2Req(st.request_id);
-        L.marker([st.lat, st.lng], { icon: stopIcon(color, String(st.step)) })
-            .addTo(state.layerGroup).bindPopup(
-                `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
-                `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
-                `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
-                `Инженер: <b>${esc(selEng.name)}</b> (${esc(selEng.transport_label)})<br>` +
-                (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : ''), { maxWidth: 320 });
+        _addPoint('stp-' + idx + '-' + st.request_id, st.lng, st.lat, stopIconHtml(color, String(st.step)), _stopPopup(st, selEng));
         state.rid2eng[st.request_id] = { engIdx: idx, stop: st };
+        state.reqPoints[st.request_id] = [st.lng, st.lat];
     });
 
     // Остальные заявки: назначенные другим инженерам — с нумерацией их маршрута,
@@ -376,52 +497,41 @@ function drawAssignmentLayer(plan, idx) {
         const isUn = unassignedIds.has(req.id);
         if (isUn && !state.showUnassigned) return;
         const hit = asn.get(req.id);
-        let icon, m;
+        let html, popup;
         if (hit) {
-            const c = COLORS[hit.idx % COLORS.length];
-            icon = stopIcon(c, String(hit.stop.step));
-            m = L.marker([req.lat, req.lng], { icon })
-                .addTo(state.layerGroup)
-                .bindPopup(
-                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>` +
-                    `Окно: <b>${esc(req.window_start)}–${esc(req.window_end)}</b><br>` +
-                    `Инженер: <b>${esc(hit.eng.name)}</b> (${esc(hit.eng.transport_label)})<br>` +
-                    (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
-                    `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}`,
-                    { maxWidth: 320 });
+            html = stopIconHtml(COLORS[hit.idx % COLORS.length], String(hit.stop.step));
+            popup = `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>` +
+                `Окно: <b>${esc(req.window_start)}–${esc(req.window_end)}</b><br>` +
+                `Инженер: <b>${esc(hit.eng.name)}</b> (${esc(hit.eng.transport_label)})<br>` +
+                (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
+                `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}`;
+            _addPoint('stp-' + hit.idx + '-' + req.id, req.lng, req.lat, html, popup);
         } else if (isUn) {
-            icon = statusIcon('#95a5a6');
-            m = L.marker([req.lat, req.lng], { icon })
-                .addTo(state.layerGroup)
-                .bindPopup(
-                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>❌ <b>Не назначена</b><br>` +
-                    `Окно: <b>${esc(req.window_start)}–${esc(req.window_end)}</b><br>` +
-                    (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
-                    `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}`,
-                    { maxWidth: 320 });
+            html = statusIconHtml('#95a5a6');
+            popup = `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>❌ <b>Не назначена</b><br>` +
+                `Окно: <b>${esc(req.window_start)}–${esc(req.window_end)}</b><br>` +
+                (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
+                `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}`;
+            _addPoint('un-' + req.id, req.lng, req.lat, html, popup);
         } else {
-            const c = STATUS_COLORS[req.status] || STATUS_DEFAULT;
-            icon = statusIcon(c);
-            m = L.marker([req.lat, req.lng], { icon })
-                .addTo(state.layerGroup)
-                .bindPopup(
-                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>` +
-                    (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
-                    (req.control_brigade ? `Контроль: ${esc(req.control_brigade)}<br>` : '') +
-                    (req.gigabit ? 'Гигабитное подключение' : ''),
-                    { maxWidth: 320 });
+            html = statusIconHtml(STATUS_COLORS[req.status] || STATUS_DEFAULT);
+            popup = `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>` +
+                (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
+                (req.control_brigade ? `Контроль: ${esc(req.control_brigade)}<br>` : '') +
+                (req.gigabit ? 'Гигабитное подключение' : '');
+            _addPoint('rs-' + req.id, req.lng, req.lat, html, popup);
         }
-        state.reqMarkers[req.id] = m;
+        state.reqPoints[req.id] = [req.lng, req.lat];
     });
 }
 
 // renderMap(fit): fit=false — перерисовка без перецентровки (переключение чекбоксов).
 function renderMap(fit) {
-    if (!state.map || !state.layerGroup) return;
-    state.layerGroup.clearLayers();
-    state.lines = {};
+    if (!state.map) return;
+    _clearPoints();
+    state.lineCoords = {};
     state.rid2eng = {};
-    state.reqMarkers = {};
+    state.reqPoints = {};
     const plan = state.plan;
     const singleIdx = (state.selectedEng != null && state.selectedEng < plan.engineers.length)
         ? state.selectedEng : null;
@@ -430,59 +540,45 @@ function renderMap(fit) {
 
     if (singleIdx != null && state.showAllRequests) {
         drawAssignmentLayer(plan, singleIdx);
+        if (fit) fitCoords(state.lineCoords[singleIdx], 0.2);
+        _prunePoints();
         return;
     }
 
-    const allBounds = [];
+    const features = [];
+    const allCoords = [];
     const displayed = new Set();
 
     plan.engineers.forEach((eng, idx) => {
         if (singleIdx != null && idx !== singleIdx) return;
         const color = COLORS[idx % COLORS.length];
-        // Дороги из OSRM (eng.route) или прямая линия как раньше.
-        const linePts = (Array.isArray(eng.route) && eng.route.length > 1)
-            ? eng.route
-            : [eng.start, ...eng.stops.map(s => [s.lat, s.lng])];
         const highlighted = singleIdx == null && state.selectedEng === idx;
-        const line = L.polyline(linePts.map(p => [p[0], p[1]]), {
-            color, weight: highlighted ? 6 : 3, opacity: 0.85,
-        }).addTo(state.layerGroup);
-        line.on('click', () => focusEngineer(idx));
-        line.bindTooltip(
-            `Инженер ${idx + 1} · ${eng.stops.length} заявок · ${eng.km.toFixed(1)} км`,
-            { sticky: true, direction: 'top', offset: [0, -6], className: 'route-tip' });
-        state.lines[idx] = line;
-        allBounds.push(...line.getLatLngs());
+        const coords = _lineCoords(eng);
+        features.push(_routeFeature(eng, idx, highlighted));
+        state.lineCoords[idx] = coords;
+        allCoords.push(...coords);
 
-        L.marker([eng.start.lat, eng.start.lng], { icon: officeIcon() })
-            .addTo(state.layerGroup)
-            .bindPopup(`<b>🏢 Офис (${esc(plan.region_name)})</b><br>${esc(eng.start.name || '')}`);
+        _addPoint('ofc-' + idx, eng.start.lng, eng.start.lat, officeIconHtml(), _officePopup(plan, eng.start));
 
         eng.stops.forEach(st => {
             displayed.add(st.request_id);
-            const req = planRid2Req(st.request_id);
-            L.marker([st.lat, st.lng], { icon: stopIcon(color, String(st.step)) })
-                .addTo(state.layerGroup).bindPopup(
-                    `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
-                    `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
-                    `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
-                    `Инженер: <b>${esc(eng.name)}</b> (${esc(eng.transport_label)})<br>` +
-                    (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : ''), { maxWidth: 320 });
+            _addPoint('stp-' + idx + '-' + st.request_id, st.lng, st.lat, stopIconHtml(color, String(st.step)), _stopPopup(st, eng));
             state.rid2eng[st.request_id] = { engIdx: idx, stop: st };
+            state.reqPoints[st.request_id] = [st.lng, st.lat];
         });
     });
 
     // Неназначенные (чекбокс «Показывать неназначенные»)
     const unassignedIds = new Set();
-    plan.unassigned.forEach(u => { unassignedIds.add(u.request_id); });
+    plan.unassigned.forEach(u => unassignedIds.add(u.request_id));
     if (state.showUnassigned) {
         plan.unassigned.forEach(u => {
             const req = planRid2Req(u.request_id);
             if (!req || req.lat == null) return;
             displayed.add(u.request_id);
-            L.marker([req.lat, req.lng], { icon: unassignedIcon() })
-                .addTo(state.layerGroup)
-                .bindPopup(`<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
+            _addPoint('un-' + u.request_id, req.lng, req.lat, unassignedIconHtml(),
+                `<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
+            state.reqPoints[u.request_id] = [req.lng, req.lat];
         });
     }
 
@@ -494,21 +590,19 @@ function renderMap(fit) {
             if (state.hiddenStatuses.has(req.status)) return;
             if (!state.showDone && DONE_STATUSES.includes(req.status)) return;
             const color = STATUS_COLORS[req.status] || STATUS_DEFAULT;
-            const m = L.marker([req.lat, req.lng], { icon: statusIcon(color) })
-                .addTo(state.layerGroup)
-                .bindPopup(
-                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>Статус: <b>${esc(req.status || '—')}</b>` +
-                    (req.control_brigade ? `<br>Контроль: ${esc(req.control_brigade)}` : '') +
-                    (req.gigabit ? '<br>Гигабитное подключение' : ''), { maxWidth: 320 });
-            state.reqMarkers[req.id] = m;
+            _addPoint('rs-' + req.id, req.lng, req.lat, statusIconHtml(color),
+                `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>Статус: <b>${esc(req.status || '—')}</b>` +
+                (req.control_brigade ? `<br>Контроль: ${esc(req.control_brigade)}` : '') +
+                (req.gigabit ? '<br>Гигабитное подключение' : ''));
+            state.reqPoints[req.id] = [req.lng, req.lat];
         });
     }
 
-    if (fit && singleIdx != null && state.lines[singleIdx]) {
-        state.map.fitBounds(state.lines[singleIdx].getBounds().pad(0.25));
-    } else if (fit && allBounds.length) {
-        state.map.fitBounds(L.latLngBounds(allBounds).pad(0.15));
-    }
+    _setRoutes(features);
+    _prunePoints();
+
+    if (fit && singleIdx != null && state.lineCoords[singleIdx]) fitCoords(state.lineCoords[singleIdx], 0.2);
+    else if (fit && allCoords.length) fitCoords(allCoords, 0.15);
 }
 
 function renderRoutesPanel() {
@@ -546,8 +640,8 @@ function focusEngineer(idx) {
     renderMap();
     renderDynamicPanel();
     renderSectionMain(currentSection());
-    if (state.selectedEng != null && state.lines[idx]) {
-        state.map.fitBounds(state.lines[idx].getBounds().pad(0.2));
+    if (state.selectedEng != null && state.lineCoords[idx]) {
+        fitCoords(state.lineCoords[idx], 0.2);
     }
 }
 
@@ -575,9 +669,8 @@ function showRequestOnMap(id, ev) {
     }
     const req = planRid2Req(id);
     if (req && req.lat != null) {
-        const m = state.reqMarkers[id];
-        if (m) state.map.flyTo(m.getLatLng(), 15);
-        else state.map.flyTo([req.lat, req.lng], 15);
+        const pt = state.reqPoints[id];
+        state.map.flyTo({ center: pt || [req.lng, req.lat], zoom: 15, duration: 800 });
     }
 }
 
@@ -791,25 +884,17 @@ async function runScenario(type) {
 function planRid2Req(reqId) {
     return state.requests.find(r => r.id === reqId);
 }
-function stopIcon(color, num) {
-    return L.divIcon({
-        className: '',
-        html: `<div class="stop-ico" style="border-color:${color};color:${color};">${esc(num)}</div>`,
-        iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -13],
-    });
+function stopIconHtml(color, num) {
+    return `<div class="stop-ico" style="border-color:${color};color:${color};">${esc(num)}</div>`;
 }
-function officeIcon() {
-    return L.divIcon({ className: '', html: '<div class="office-ico">🏢</div>', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -16] });
+function officeIconHtml() {
+    return '<div class="office-ico">🏢</div>';
 }
-function unassignedIcon() {
-    return L.divIcon({ className: '', html: '<div class="un-ico">✕</div>', iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -13] });
+function unassignedIconHtml() {
+    return '<div class="un-ico">✕</div>';
 }
-function statusIcon(color) {
-    return L.divIcon({
-        className: '',
-        html: `<div class="status-ico" style="border-color:${color};color:${color};">◉</div>`,
-        iconSize: [18, 18], iconAnchor: [9, 9], popupAnchor: [0, -10],
-    });
+function statusIconHtml(color) {
+    return `<div class="status-ico" style="border-color:${color};color:${color};">◉</div>`;
 }
 
 init();
