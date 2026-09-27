@@ -11,6 +11,7 @@ const STATUS_COLORS = {
     'Выполнена': '#b8d8c0', 'Отменена': '#636e72',
 };
 const STATUS_DEFAULT = '#b0bec5';
+const DONE_STATUSES = ['Выполнена', 'Отменена'];
 
 const state = {
     region: 'vostok',
@@ -26,9 +27,10 @@ const state = {
     lines: {},         // engineer index -> L.polyline
     rid2eng: {},       // request_id -> {engIdx, stop}
     reqMarkers: {},    // request_id -> L.marker (справочная заявка источника)
-    showRequests: true,   // чекбокс «Заявки на карте»
-    viewMode: 'all',      // 'all' | 'single'
-    selectedEng: null,    // индекс выбранного инженера
+    showAllRequests: true,   // «Показывать все заявки» (все маршруты — принудительно вкл.)
+    showUnassigned: false,   // «Показывать неназначенные»
+    showDone: false,         // «Показывать выполненные» (Выполнена/Отменена)
+    selectedEng: null,    // выбранный инженер (null = все маршруты)
     hiddenStatuses: new Set(), // статусы, скрытые в легенде
     legendList: [],       // статусы для легенды
     lastScenario: null,
@@ -224,34 +226,84 @@ function renderAll() {
 function renderMapTools() {
     const box = $('mapTools');
     if (!box) return;
+    const allRoutes = state.selectedEng == null;
+    const effShowAll = allRoutes || state.showAllRequests;
     const withStatus = state.requests.some(r => r.status);
-    const legend = (withStatus && state.showRequests)
+    const hasDone = DONE_STATUSES.some(s => state.legendList.includes(s));
+    const doneCb = (withStatus && hasDone) ? ` <span class="mt-sep"></span><label class="mt-check"><input type="checkbox" id="showDone"${state.showDone ? ' checked' : ''} onchange="toggleDone(this.checked)"> Показывать выполненные</label>` : '';
+    const legend = (withStatus && effShowAll)
         ? ' <span class="mt-sep"></span><span class="mt-label">Статусы:</span>' +
-          state.legendList.map((st, i) =>
-              `<span class="legend-chip${state.hiddenStatuses.has(st) ? ' off' : ''}" onclick="toggleStatus(${i})" style="color:${STATUS_COLORS[st] || STATUS_DEFAULT}">${esc(st)}</span>`).join('')
+          state.legendList.map((st, i) => {
+              if (!state.showDone && DONE_STATUSES.includes(st)) return '';
+              return `<span class="legend-chip${state.hiddenStatuses.has(st) ? ' off' : ''}" onclick="toggleStatus(${i})" style="color:${STATUS_COLORS[st] || STATUS_DEFAULT}">${esc(st)}</span>`;
+          }).join('')
+        : '';
+    const sel = (state.selectedEng != null && state.plan && state.plan.engineers[state.selectedEng]);
+    const hint = sel
+        ? ` <span class="mt-hint">— выбран маршрут ${esc(sel.name)} (${sel.stops.length} заявок); клик по нему ещё раз вернёт все маршруты</span>`
         : '';
     box.innerHTML =
-        `<label class="mt-check"><input type="checkbox" id="showReq"${state.showRequests ? ' checked' : ''} onchange="toggleRequests(this.checked)"> Заявки на карте</label>` +
-        `<span class="mt-sep"></span><span class="mt-label">Маршруты:</span>` +
-        `<label class="mt-radio"><input type="radio" name="viewMode" value="all"${state.viewMode === 'all' ? ' checked' : ''} onchange="setViewMode('all')"> Все</label>` +
-        `<label class="mt-radio"><input type="radio" name="viewMode" value="single"${state.viewMode === 'single' ? ' checked' : ''} onchange="setViewMode('single')"> Один инженер</label>` +
-        legend +
-        (state.viewMode === 'single' && state.selectedEng == null
-            ? '<span class="mt-hint">— выберите инженера в списке</span>' : '');
+        `<label class="mt-check"><input type="checkbox" id="showAll"${effShowAll ? ' checked' : ''} ${allRoutes ? 'disabled' : ''} onchange="toggleAllRequests(this.checked)"> Показывать все заявки</label>` +
+        ` <span class="mt-sep"></span><label class="mt-check"><input type="checkbox" id="showUn"${state.showUnassigned ? ' checked' : ''} onchange="toggleUnassigned(this.checked)"> Показывать неназначенные</label>` +
+        doneCb + legend + hint;
+    renderRouteSteps();
 }
 
-function syncMapTools() {
+// ===== Маршрут выбранного инженера по шагам (под картой) =====
+function renderRouteSteps() {
+    const box = $('routeSteps');
+    if (!box) return;
+    const plan = state.plan;
+    const eng = (state.selectedEng != null && plan && plan.engineers[state.selectedEng])
+        ? plan.engineers[state.selectedEng] : null;
+    if (!eng) {
+        box.innerHTML = '<div class="route-steps-empty">Кликните на инженера в списке — здесь появится его маршрут по шагам.</div>';
+        return;
+    }
+    const color = COLORS[state.selectedEng % COLORS.length];
+    let rows = '';
+    eng.stops.forEach(st => {
+        rows += `<tr onclick="focusStop('${esc(st.request_id)}')">
+            <td><span class="rs-badge" style="background:${color}22;color:${color};">${st.step}</span></td>
+            <td><b>${esc(st.request_id)}</b></td>
+            <td>${esc(st.address)}</td>
+            <td>${esc(st.window[0])}–${esc(st.window[1])}</td>
+            <td>${esc(st.arrival)}</td>
+            <td>${esc(st.start_work)}–${esc(st.finish)}</td>
+        </tr>`;
+    });
+    box.innerHTML =
+        `<div class="route-steps-title">🚗 Маршрут: <b>${esc(eng.name)}</b> (${TRANSPORT_ICON[eng.transport] || '🚶'} ${esc(eng.transport_label)}) · ` +
+        `${eng.stops.length} заявок · ${eng.km.toFixed(1)} км · ${fmtMin(eng.minutes)} · Офис → ${esc(eng.stops[0] ? eng.stops[0].address : '—')}</div>` +
+        `<table class="route-table"><thead><tr><th>№</th><th>Заявка</th><th>Адрес</th><th>Окно</th><th>Прибытие</th><th>Работы</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function focusStop(id) {
+    const hit = state.rid2eng[id];
+    if (hit && hit.stop) state.map.flyTo([hit.stop.lat, hit.stop.lng], 15);
+    else {
+        const req = planRid2Req(id);
+        if (req && req.lat != null) state.map.flyTo([req.lat, req.lng], 15);
+    }
+}
+
+function syncMapTools(fit) {
     renderMapTools();
-    renderMap();
+    renderMap(fit);
 }
 
-function toggleRequests(on) {
-    state.showRequests = on;
+function toggleAllRequests(on) {
+    state.showAllRequests = on;
     syncMapTools();
 }
 
-function setViewMode(m) {
-    state.viewMode = m;
+function toggleUnassigned(on) {
+    state.showUnassigned = on;
+    syncMapTools();
+}
+
+function toggleDone(on) {
+    state.showDone = on;
     syncMapTools();
 }
 
@@ -274,16 +326,112 @@ function renderStats() {
 }
 
 // ===== Карта =====
-function renderMap() {
+// «Все заявки» при выбранном инженере: его маршрут и точки как раньше,
+// остальные заявки — точками в цвете их инженера (неназначенные — серые).
+function drawAssignmentLayer(plan, idx) {
+    const asn = new Map();
+    plan.engineers.forEach((eng, i) => {
+        eng.stops.forEach(s => asn.set(s.request_id, { eng, idx: i, stop: s }));
+    });
+    const unassignedIds = new Set(plan.unassigned.map(u => u.request_id));
+    const selEng = plan.engineers[idx];
+    const color = COLORS[idx % COLORS.length];
+
+    // Маршрут и точки выбранного инженера — как обычно.
+    const linePts = (Array.isArray(selEng.route) && selEng.route.length > 1)
+        ? selEng.route
+        : [selEng.start, ...selEng.stops.map(s => [s.lat, s.lng])];
+    const line = L.polyline(linePts.map(p => [p[0], p[1]]), {
+        color, weight: 3, opacity: 0.85,
+    }).addTo(state.layerGroup);
+    line.bindTooltip(
+        `Инженер ${idx + 1} · ${selEng.stops.length} заявок · ${selEng.km.toFixed(1)} км`,
+        { sticky: true, direction: 'top', offset: [0, -6], className: 'route-tip' });
+    state.lines[idx] = line;
+
+    L.marker([selEng.start.lat, selEng.start.lng], { icon: officeIcon() })
+        .addTo(state.layerGroup)
+        .bindPopup(`<b>🏢 Офис (${esc(plan.region_name)})</b><br>${esc(selEng.start.name || '')}`);
+
+    const shownStops = new Set();
+    selEng.stops.forEach(st => {
+        shownStops.add(st.request_id);
+        const req = planRid2Req(st.request_id);
+        L.marker([st.lat, st.lng], { icon: stopIcon(color, String(st.step)) })
+            .addTo(state.layerGroup).bindPopup(
+                `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
+                `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
+                `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
+                `Инженер: <b>${esc(selEng.name)}</b> (${esc(selEng.transport_label)})<br>` +
+                (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : ''), { maxWidth: 320 });
+        state.rid2eng[st.request_id] = { engIdx: idx, stop: st };
+    });
+
+    // Остальные заявки: назначенные другим инженерам — с нумерацией их маршрута,
+    // неназначенные — серые, вне плана — цвет по статусу.
+    state.requests.forEach(req => {
+        if (req.lat == null || shownStops.has(req.id)) return;
+        if (state.hiddenStatuses.has(req.status)) return;
+        if (!state.showDone && DONE_STATUSES.includes(req.status)) return;
+        const isUn = unassignedIds.has(req.id);
+        if (isUn && !state.showUnassigned) return;
+        const hit = asn.get(req.id);
+        let icon, m;
+        if (hit) {
+            const c = COLORS[hit.idx % COLORS.length];
+            icon = stopIcon(c, String(hit.stop.step));
+            m = L.marker([req.lat, req.lng], { icon })
+                .addTo(state.layerGroup)
+                .bindPopup(
+                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>` +
+                    `Окно: <b>${esc(req.window_start)}–${esc(req.window_end)}</b><br>` +
+                    `Инженер: <b>${esc(hit.eng.name)}</b> (${esc(hit.eng.transport_label)})<br>` +
+                    (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
+                    `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}`,
+                    { maxWidth: 320 });
+        } else if (isUn) {
+            icon = statusIcon('#95a5a6');
+            m = L.marker([req.lat, req.lng], { icon })
+                .addTo(state.layerGroup)
+                .bindPopup(
+                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>❌ <b>Не назначена</b><br>` +
+                    `Окно: <b>${esc(req.window_start)}–${esc(req.window_end)}</b><br>` +
+                    (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
+                    `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}`,
+                    { maxWidth: 320 });
+        } else {
+            const c = STATUS_COLORS[req.status] || STATUS_DEFAULT;
+            icon = statusIcon(c);
+            m = L.marker([req.lat, req.lng], { icon })
+                .addTo(state.layerGroup)
+                .bindPopup(
+                    `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>` +
+                    (req.status ? `Статус: <b>${esc(req.status)}</b><br>` : '') +
+                    (req.control_brigade ? `Контроль: ${esc(req.control_brigade)}<br>` : '') +
+                    (req.gigabit ? 'Гигабитное подключение' : ''),
+                    { maxWidth: 320 });
+        }
+        state.reqMarkers[req.id] = m;
+    });
+}
+
+// renderMap(fit): fit=false — перерисовка без перецентровки (переключение чекбоксов).
+function renderMap(fit) {
     if (!state.map || !state.layerGroup) return;
     state.layerGroup.clearLayers();
     state.lines = {};
     state.rid2eng = {};
     state.reqMarkers = {};
     const plan = state.plan;
-    const singleIdx = state.viewMode === 'single'
-        ? (state.selectedEng != null && state.selectedEng < plan.engineers.length ? state.selectedEng : null)
-        : null;
+    const singleIdx = (state.selectedEng != null && state.selectedEng < plan.engineers.length)
+        ? state.selectedEng : null;
+    const allRoutes = singleIdx == null;
+    const effShowAll = allRoutes || state.showAllRequests;
+
+    if (singleIdx != null && state.showAllRequests) {
+        drawAssignmentLayer(plan, singleIdx);
+        return;
+    }
 
     const allBounds = [];
     const displayed = new Set();
@@ -324,21 +472,27 @@ function renderMap() {
         });
     });
 
-    // Неназначенные (всегда видны)
-    plan.unassigned.forEach(u => {
-        const req = planRid2Req(u.request_id);
-        if (!req || req.lat == null) return;
-        displayed.add(u.request_id);
-        L.marker([req.lat, req.lng], { icon: unassignedIcon() })
-            .addTo(state.layerGroup)
-            .bindPopup(`<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
-    });
+    // Неназначенные (чекбокс «Показывать неназначенные»)
+    const unassignedIds = new Set();
+    plan.unassigned.forEach(u => { unassignedIds.add(u.request_id); });
+    if (state.showUnassigned) {
+        plan.unassigned.forEach(u => {
+            const req = planRid2Req(u.request_id);
+            if (!req || req.lat == null) return;
+            displayed.add(u.request_id);
+            L.marker([req.lat, req.lng], { icon: unassignedIcon() })
+                .addTo(state.layerGroup)
+                .bindPopup(`<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
+        });
+    }
 
-    // Все заявки источника (чекбокс «Заявки на карте») — не дублируем показанные.
-    if (state.showRequests) {
+    // «Показывать все заявки»: все заявки источника; показанные планом не дублируем.
+    if (effShowAll) {
         state.requests.forEach(req => {
             if (displayed.has(req.id) || req.lat == null) return;
+            if (!state.showUnassigned && unassignedIds.has(req.id)) return;
             if (state.hiddenStatuses.has(req.status)) return;
+            if (!state.showDone && DONE_STATUSES.includes(req.status)) return;
             const color = STATUS_COLORS[req.status] || STATUS_DEFAULT;
             const m = L.marker([req.lat, req.lng], { icon: statusIcon(color) })
                 .addTo(state.layerGroup)
@@ -350,9 +504,9 @@ function renderMap() {
         });
     }
 
-    if (singleIdx != null && state.lines[singleIdx]) {
+    if (fit && singleIdx != null && state.lines[singleIdx]) {
         state.map.fitBounds(state.lines[singleIdx].getBounds().pad(0.25));
-    } else if (allBounds.length) {
+    } else if (fit && allBounds.length) {
         state.map.fitBounds(L.latLngBounds(allBounds).pad(0.15));
     }
 }
@@ -384,12 +538,17 @@ function renderRoutesPanel() {
 function focusEngineer(idx) {
     const plan = state.plan;
     if (!plan || idx == null || idx >= plan.engineers.length) return;
-    state.selectedEng = idx;
+    // Повторный клик по выбранному инженеру — показать все маршруты.
+    state.selectedEng = (state.selectedEng === idx) ? null : idx;
+    // При выборе инженера показываем только его заявки (снимаем «Показывать все заявки»).
+    if (state.selectedEng != null) state.showAllRequests = false;
+    renderMapTools();
     renderMap();
     renderDynamicPanel();
     renderSectionMain(currentSection());
-    const line = state.lines[idx];
-    if (line) state.map.fitBounds(line.getBounds().pad(0.2));
+    if (state.selectedEng != null && state.lines[idx]) {
+        state.map.fitBounds(state.lines[idx].getBounds().pad(0.2));
+    }
 }
 
 // Переход на карту маршрутов и показ маршрута инженера (клик из вкладки «Инженеры»)
@@ -404,8 +563,13 @@ function showRequestOnMap(id, ev) {
     switchSection('routes', null);
     const hit = state.rid2eng[id];
     if (hit) { focusEngineer(hit.engIdx); return; }
-    if (!state.showRequests) {
-        state.showRequests = true;
+    if (state.plan && state.plan.unassigned.some(u => u.request_id === id) && !state.showUnassigned) {
+        state.showUnassigned = true;
+        renderMapTools();
+        renderMap();
+    }
+    if (!state.showAllRequests) {
+        state.showAllRequests = true;
         renderMapTools();
         renderMap();
     }
