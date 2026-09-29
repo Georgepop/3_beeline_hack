@@ -8,10 +8,12 @@ mode: baseline_fifo | improved | benchmark_ortools  →  какой решате
 
 from app.config import get_settings
 from app import mock
+from app import session
 from app.regions import REGIONS, SKILLS, norm_min
 from app.schemas import (
     Comparison,
     Engineer,
+    PlanMetrics,
     PlanResponse,
     Request,
     ScenarioEvent,
@@ -51,13 +53,62 @@ def solve(region: str, mode: str, dist: str) -> PlanResponse:
             control = None
 
     plan.comparison = Comparison(control=control)
+    plan.comparison = _with_baseline(plan, reqs, engs, dist, mode)
+    from app import summary as summary_mod
+
+    plan.summary = summary_mod.build_summary(plan, reqs, engs, dist)
+    session.store((region, mode, dist), plan)
     return plan
+
+
+def _with_baseline(plan: PlanResponse, reqs, engs, dist: str, mode: str) -> Comparison:
+    """Сравнение с базовым FIFO — обязательный пункт ТЗ (оценка качества решения).
+
+    FIFO считается всегда, когда активен не он сам: он заметно дешевле улучшенного,
+    поэтому показывает выигрыш текущего режима на тех же данных. Обратный случай
+    (активен FIFO) улучшенный солвер не запускаем — это демонстрация базы, а не
+    сравнение; в note тогда честно сказано, что сравнение доступно на improved.
+    """
+    comp = plan.comparison
+    comp.improved_mode = mode
+    comp.baseline_mode = "baseline_fifo"
+    if mode == "baseline_fifo":
+        comp.baseline = plan.metrics
+        comp.note = "Активен базовый FIFO. Переключите режим на «Улучшенный», чтобы увидеть выигрыш."
+        return comp
+
+    base = get_solver("baseline_fifo")(plan.region, dist, reqs, engs)
+    comp.baseline = base.metrics
+    comp.improved = plan.metrics
+    d = plan.metrics.assigned_count - base.metrics.assigned_count
+    comp.note = _comparison_note(base.metrics, plan.metrics, d)
+    return comp
+
+
+def _comparison_note(base: PlanMetrics, cur: PlanMetrics, d: int) -> str:
+    """Фраза о выигрыше. Пробег сравниваем на заявку: суммарный растёт вместе с
+    числом выполненных заявок и сам по себе ничего не говорит о качестве."""
+    if d > 0:
+        per_base = base.total_km / base.assigned_count if base.assigned_count else 0.0
+        per_cur = cur.total_km / cur.assigned_count if cur.assigned_count else 0.0
+        parts = [f"выполнено заявок на {d} больше"]
+        if per_base and per_cur:
+            delta = per_cur - per_base
+            parts.append(f"пробег на заявку {per_base:.1f} → {per_cur:.1f} км "
+                         f"({'+' if delta >= 0 else '−'}{abs(delta):.1f})")
+        return "Улучшенный алгоритм: " + ", ".join(parts) + "."
+    if d == 0:
+        return ("Улучшенный алгоритм выполняет столько же заявок, сколько FIFO — "
+                "выигрыш здесь в пробеге и загрузке, а не в числе выполненных заявок.")
+    return (f"Улучшенный алгоритм выполняет на {abs(d)} заявок меньше, чем FIFO; "
+            f"это отклонение требует разбора.")
 
 
 def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
     reqs, engs = dataset(region)
     mode, dist = _active_mode()
     before = get_solver(mode)(region, dist, reqs, engs)
+    session.bump()  # набор заявок изменился — сохранённые планы больше не актуальны
 
     if event.type == "urgent":
         reqs = reqs + [_urgent_request(region)]
@@ -77,6 +128,10 @@ def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
         raise ValueError("Неизвестный тип события")
 
     after = get_solver(mode)(region, dist, reqs, engs)
+    from app import summary as summary_mod
+
+    after.summary = summary_mod.build_summary(after, reqs, engs, dist)
+    session.store((region, mode, dist), after)
     return ScenarioResult(event=_event_label(event), plan=after, diff=_compare_plans(before, after))
 
 

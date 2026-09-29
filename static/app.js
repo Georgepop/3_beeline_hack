@@ -223,6 +223,7 @@ async function loadPlan() {
         state.selectedEng = null;
         state.hiddenStatuses = new Set();
         state.legendList = [...new Set(requests.map(r => r.status).filter(Boolean))];
+        closeExplain();  // план пересчитан — прежнее объяснение больше не про этот план
         renderAll();
     } catch (e) {
         toast('Ошибка плана: ' + e.message, 'error');
@@ -271,10 +272,66 @@ function renderDynamicPanel() {
 function renderAll() {
     if (!state.plan) return;
     renderStats();
+    renderSummary();
+    renderComparison();
     renderMapTools();
     renderMap(true);
     renderDynamicPanel();
     renderSectionMain(currentSection());
+}
+
+// ===== Сводка по плану (ТЗ 2.4.2) =====
+// ===== Сравнение с базовым FIFO (ТЗ 2.4.3) =====
+function renderComparison() {
+    const box = $('planCompare');
+    if (!box) return;
+    const cmp = state.plan.comparison;
+    const base = cmp && cmp.baseline;
+    if (!base) { box.hidden = true; box.innerHTML = ''; return; }
+    const cur = cmp.improved;
+    box.hidden = false;
+
+    const rows = [
+        { k: 'Выполнено заявок', b: base.assigned_count, c: cur ? cur.assigned_count : null, better: 'up' },
+        { k: 'Неназначено', b: base.unassigned_count, c: cur ? cur.unassigned_count : null, better: 'down' },
+        { k: 'Исполнителей в рейсе', b: base.engineers_used, c: cur ? cur.engineers_used : null, better: 'down' },
+        { k: 'Пробег, км', b: base.total_km, c: cur ? cur.total_km : null, better: 'down', dp: 1 },
+        { k: 'Пробег на заявку, км', b: base.assigned_count ? base.total_km / base.assigned_count : 0,
+          c: cur && cur.assigned_count ? cur.total_km / cur.assigned_count : null, better: 'down', dp: 2 },
+    ];
+
+    let html = '<div class="cmp-title">Сравнение с базовым FIFO</div>';
+    html += '<table class="cmp-table"><tr><th>Показатель</th><th>FIFO</th>'
+        + (cur ? '<th>Улучшенный</th><th>Δ</th>' : '') + '</tr>';
+    rows.forEach(r => {
+        const fmt = v => v == null ? '—' : (r.dp ? v.toFixed(r.dp) : v);
+        let delta = '';
+        if (cur && r.c != null) {
+            const d = r.c - r.b;
+            const good = r.better === 'up' ? d > 0 : d < 0;
+            delta = d === 0 ? '=' : (good ? '▲' : '▼') + ' ' + fmt(Math.abs(d));
+        }
+        html += `<tr><td>${esc(r.k)}</td><td class="cmp-b">${fmt(r.b)}</td>`
+            + (cur ? `<td class="cmp-c">${fmt(r.c)}</td><td class="cmp-d">${delta}</td>` : '') + '</tr>';
+    });
+    html += '</table>';
+    if (cmp.note) html += `<div class="cmp-note">${esc(cmp.note)}</div>`;
+    if (cmp.control) html += '<div class="cmp-note dim">Контрольное распределение доступно в разделе «Сравнение».</div>';
+    box.innerHTML = html;
+}
+
+function renderSummary() {
+    const box = $('planSummary');
+    if (!box) return;
+    const s = state.plan.summary;
+    if (!s) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    let html = '<div class="summary-lead">' + esc(s.headline) + '</div>';
+    html += '<div class="summary-text">' + esc(s.text) + '</div>';
+    if (s.factors && s.factors.length) {
+        html += '<ul class="summary-factors">' + s.factors.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul>';
+    }
+    box.innerHTML = html;
 }
 
 // ===== Инструменты карты =====
@@ -583,7 +640,8 @@ function renderMap(fit) {
             if (!req || req.lat == null) return;
             displayed.add(u.request_id);
             _addPoint('un-' + u.request_id, req.lng, req.lat, unassignedIconHtml(),
-                `<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`);
+                `<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`
+                + (u.reason_detail ? `<br><span style="opacity:.8">${esc(u.reason_detail)}</span>` : ''));
             state.reqPoints[u.request_id] = [req.lng, req.lat];
         });
     }
@@ -680,6 +738,53 @@ function showRequestOnMap(id, ev) {
     }
 }
 
+// ===== Объяснение решения (ТЗ 2.1.7) =====
+async function explainRequest(id) {
+    const card = $('explainCard');
+    if (!card) return;
+    card.hidden = false;
+    card.innerHTML = '<div class="explain-title">Объяснение по заявке ' + esc(id) + '…</div>';
+    switchSection('routes', null);
+    try {
+        const qs = new URLSearchParams({ region: state.region, request_id: id, mode: state.mode, dist: state.dist });
+        const e = await api('/api/explain?' + qs.toString());
+        renderExplain(e);
+    } catch (err) {
+        card.innerHTML = '<div class="explain-head err">Объяснение недоступно</div><div class="explain-hint">' + esc(err.message) + '</div>';
+    }
+}
+
+function renderExplain(e) {
+    const card = $('explainCard');
+    const badge = e.assigned
+        ? '<span class="explain-badge ok">назначена</span>'
+        : '<span class="explain-badge bad">' + esc(e.reason || 'не назначена') + '</span>';
+    let html = '<div class="explain-head">' + badge
+        + '<span class="explain-title">' + esc(e.request_id) + ' — ' + esc(e.address) + '</span>'
+        + '<button class="explain-close" onclick="closeExplain()">✕</button></div>';
+    html += '<div class="explain-lead">' + esc(e.headline) + '</div>';
+    if (e.detail) html += '<div class="explain-why">' + esc(e.detail) + '</div>';
+    if (e.facts && e.facts.length) {
+        html += '<ul class="explain-list">' + e.facts.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul>';
+    }
+    if (e.alternatives && e.alternatives.length) {
+        html += '<div class="explain-sub">Кто ещё мог взять заявку</div><ul class="explain-list">'
+            + e.alternatives.map(a => '<li>' + esc(a.engineer) + ' (' + esc(a.transport) + ') — добавка '
+                + (a.added_km >= 0 ? '+' : '') + esc(a.added_km) + ' км</li>').join('') + '</ul>';
+    }
+    if (e.rejected && e.rejected.length) {
+        html += '<div class="explain-sub">Не подошли</div><ul class="explain-list dim">'
+            + e.rejected.map(r => '<li>' + esc(r.engineer) + ' — ' + esc(r.why) + '</li>').join('') + '</ul>';
+    }
+    if (e.hint) html += '<div class="explain-hint">💡 ' + esc(e.hint) + '</div>';
+    card.innerHTML = html;
+}
+
+function closeExplain() {
+    const card = $('explainCard');
+    if (card) { card.hidden = true; card.innerHTML = ''; }
+}
+
 // ===== Заявки =====
 function filterRequests() {
     if ($('requestsList')) $('requestsList').innerHTML = renderRequests();
@@ -701,7 +806,7 @@ function renderRequests() {
     assignedRows.forEach(s => {
         const req = byId.get(s.request_id);
         html += `
-        <div class="item-card">
+        <div class="item-card clickable" onclick="explainRequest('${esc(s.request_id)}')">
             <div class="item-header">
                 <div class="item-icon" style="background:#e8f5f0;color:#2d9c7a;">✓</div>
                 <div class="item-title">${esc(s.request_id)} — ${esc(s.address)}</div>
@@ -721,7 +826,7 @@ function renderRequests() {
         const req = byId.get(u.request_id);
         if (!pass(u, q)) return;
         html += `
-        <div class="item-card">
+        <div class="item-card clickable" onclick="explainRequest('${esc(u.request_id)}')">
             <div class="item-header">
                 <div class="item-icon" style="background:#fde8e8;color:#e74c3c;">✕</div>
                 <div class="item-title">${esc(u.request_id)} — ${esc(u.address)}</div>
@@ -734,6 +839,7 @@ function renderRequests() {
                 ${req && req.status ? `<span>${statusChip(req.status)}</span>` : ''}
                 ${req && req.control_brigade ? `<span>Контроль: ${esc(req.control_brigade)}</span>` : ''}
             </div>
+            ${u.reason_detail ? `<div class="item-detail">${esc(u.reason_detail)}</div>` : ''}
         </div>`;
     });
 
@@ -744,7 +850,7 @@ function renderRequests() {
         html += '<div class="group-title">Справочно (источник): ' + rest.length + '</div>';
         rest.forEach(r => {
             html += `
-            <div class="item-card">
+            <div class="item-card clickable" onclick="explainRequest('${esc(r.id)}')">
                 <div class="item-header">
                     <div class="item-icon" style="background:#eef2f5;color:#90a4ae;">·</div>
                     <div class="item-title">${esc(r.id)} — ${esc(r.address)}</div>

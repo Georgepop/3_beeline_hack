@@ -51,6 +51,60 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .item-title { flex: 1; font-size: 13px; font-weight: 600; }
 .item-meta { font-size: 11px; color: #95a5a6; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.item-detail { font-size: 11px; color: #7f8c8d; line-height: 1.45; margin-top: 5px; padding-left: 8px; border-left: 2px solid #ecf0f1; }
+
+.item-card.clickable { cursor: pointer; }
+.item-card.clickable::after {
+    content: "почему так?"; font-size: 10px; color: #2d9c7a; font-weight: 600;
+    align-self: center; opacity: 0; transition: opacity .12s; white-space: nowrap;
+}
+.item-card.clickable:hover::after { opacity: .8; }
+
+/* сводка по плану (ТЗ 2.4.2) */
+.plan-summary {
+    background: #fff; border: 1px solid #d5e8e2; border-left: 4px solid #2d9c7a;
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
+}
+.summary-lead { font-size: 13px; font-weight: 600; color: #1e8449; line-height: 1.5; }
+.summary-text { font-size: 12px; color: #566573; margin-top: 4px; line-height: 1.5; }
+.summary-factors { margin: 6px 0 0; padding-left: 18px; font-size: 11.5px; color: #7f8c8d; }
+.summary-factors li { margin-bottom: 2px; }
+
+/* сравнение с базовым FIFO (ТЗ 2.4.3) — блок внизу, под маршрутом по шагам */
+.plan-compare {
+    background: #fff; border: 1px solid #dbe4ec; border-radius: 8px;
+    padding: 10px 14px; margin-top: 10px; font-size: 12px;
+}
+.cmp-title { font-weight: 600; font-size: 12.5px; color: #2c3e50; margin-bottom: 6px; }
+.cmp-table { width: 100%; border-collapse: collapse; }
+.cmp-table th, .cmp-table td { padding: 4px 8px; text-align: right; border-bottom: 1px solid #f0f3f5; }
+.cmp-table th:first-child, .cmp-table td:first-child { text-align: left; color: #566573; }
+.cmp-table th { color: #7f8c8d; font-weight: 600; font-size: 11px; }
+.cmp-b { color: #95a5a6; }
+.cmp-c { color: #2d9c7a; font-weight: 600; }
+.cmp-d { color: #2d9c7a; font-size: 11px; white-space: nowrap; }
+.cmp-note { margin-top: 6px; color: #566573; line-height: 1.5; }
+.cmp-note.dim { color: #95a5a6; font-size: 11px; }
+
+/* объяснение решения (ТЗ 2.1.7) */
+.explain-card {
+    background: #fff; border: 1px solid #2d9c7a; border-left-width: 4px; border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px; font-size: 12px; line-height: 1.55;
+}
+.explain-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.explain-head.err { color: #e74c3c; font-weight: 600; }
+.explain-title { font-weight: 600; font-size: 13px; flex: 1; }
+.explain-badge { padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.explain-badge.ok { background: #e8f5f0; color: #2d9c7a; }
+.explain-badge.bad { background: #fde8e8; color: #e74c3c; }
+.explain-close { background: none; border: none; cursor: pointer; color: #95a5a6; font-size: 14px; padding: 0 4px; }
+.explain-lead { font-size: 12.5px; margin-bottom: 5px; }
+.explain-why { color: #c0392b; margin-bottom: 6px; }
+.explain-sub { font-weight: 600; margin-top: 8px; font-size: 11.5px; color: #566573; }
+.explain-list { margin: 4px 0 0; padding-left: 18px; color: #566573; }
+.explain-list.dim { color: #95a5a6; }
+.explain-list li { margin-bottom: 2px; }
+.explain-hint { margin-top: 8px; padding: 6px 9px; background: #f4f9f7; border-radius: 5px; color: #1e8449; }
 
 /* statuses */
 .status { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; }

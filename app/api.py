@@ -4,8 +4,10 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query
 
+from app import explain as explain_mod
 from app import mock
 from app import planner
+from app import session
 from app.config import get_settings
 from app.regions import REGIONS
 from app.schemas import (
@@ -15,6 +17,7 @@ from app.schemas import (
     RegionId,
     RegionMeta,
     Request,
+    RequestExplanation,
     ScenarioEvent,
     ScenarioResult,
     SettingsIn,
@@ -133,6 +136,27 @@ def create_app() -> FastAPI:
             return planner.replay(region, ev)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/explain", response_model=RequestExplanation)
+    def explain(region: RegionId = Query(default=_settings().region),
+                request_id: str = Query(...),
+                mode: SolverMode = Query(default=_settings().solver_mode),
+                dist: DistMode = Query(default=_settings().dist_mode)):
+        """Почему заявка назначена именно так (или почему не назначена) — по требованию."""
+        from app.solvers import available as solver_available
+
+        if not solver_available(mode):
+            raise HTTPException(
+                status_code=503,
+                detail="Режим benchmark_ortools требует пакет ortools: "
+                       "pip install -r requirements-benchmark.txt",
+            )
+        key = (region, mode, dist)
+        plan = session.get(key) or planner.solve(region, mode, dist)
+        result = explain_mod.explain(region, request_id, plan)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Заявка {request_id} не найдена в регионе {region}")
+        return result
 
     @app.get("/api/settings", response_model=SettingsOut)
     def get_settings_api():

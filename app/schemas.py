@@ -69,6 +69,8 @@ class UnassignedReason(BaseModel):
     request_id: str
     address: str = ""
     reason: str
+    reason_code: str = ""      # no_skill | no_transport | outside_shift | no_capacity | no_coords | …
+    reason_detail: str = ""    # что именно не сработало: время, число исполнителей, окно
     window: list[str] = []
     skill_label: str = ""
 
@@ -82,11 +84,28 @@ class PlanMetrics(BaseModel):
     total_minutes: int = 0
 
 
+class PlanSummary(BaseModel):
+    """Краткое объяснение результата: сколько могла смена и что помешало (ТЗ 2.4.2)."""
+    headline: str = ""                        # итог одной фразой
+    text: str = ""                           # что стоит на пути к пределу смены
+    assigned: int = 0
+    total: int = 0
+    ceiling: int = 0                         # предел смены по жёстким окнам
+    engineers_used: int = 0
+    total_km: float = 0.0
+    total_minutes: int = 0
+    factors: list[str] = []                  # что встало на пути, по частоте причин
+    reason_counts: dict[str, int] = {}       # коды причин -> количество
+
+
 class Comparison(BaseModel):
-    """Сравнение improved vs baseline (+ контрольное распределение справочно)."""
+    """Сравнение текущего плана с базовым FIFO (+ контрольное распределение справочно)."""
     baseline: Optional[PlanMetrics] = None
     improved: Optional[PlanMetrics] = None
     control: Optional[dict] = None
+    baseline_mode: str = ""       # какой режим в baseline (baseline_fifo)
+    improved_mode: str = ""       # какой режим сравниваем (improved / benchmark_ortools)
+    note: str = ""                # одна фраза: что показало сравнение
 
 
 class PlanResponse(BaseModel):
@@ -98,6 +117,7 @@ class PlanResponse(BaseModel):
     engineers: list[Engineer] = []
     unassigned: list[UnassignedReason] = []
     metrics: PlanMetrics = Field(default_factory=PlanMetrics)
+    summary: Optional[PlanSummary] = None
     comparison: Comparison = Field(default_factory=Comparison)
 
 
@@ -112,6 +132,26 @@ class ScenarioResult(BaseModel):
     event: str
     plan: PlanResponse
     diff: list[dict] = []                     # человеко-читаемые изменения плана
+
+
+class RequestExplanation(BaseModel):
+    """Объяснение по одной заявке: почему назначена и почему именно так (ТЗ 2.1.7).
+
+    Считается по фактическому плану, а не пишется текстом: альтернативы
+    проверяются тем же расчётом маршрута, что и сам план.
+    """
+    request_id: str
+    address: str = ""
+    assigned: bool = False
+    headline: str = ""                        # главная фраза для карточки
+    engineer: str = ""
+    facts: list[str] = []                     # проверенные ограничения и числа
+    alternatives: list[dict] = []             # кто ещё мог взять и с каким пробегом
+    rejected: list[dict] = []                 # кто не подошёл и почему
+    reason_code: str = ""
+    reason: str = ""
+    detail: str = ""
+    hint: str = ""                            # что помогло бы выполнить заявку
 
 
 class RegionMeta(BaseModel):

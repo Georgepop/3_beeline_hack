@@ -12,8 +12,8 @@
 
 from app.config import get_settings
 from app.distance import distance_km, parse_hhmm, travel_minutes_km, travel_minutes_speed
-from app.schemas import Engineer, LatLng, Request, UnassignedReason
-from app.solvers import core
+from app.schemas import Engineer, LatLng, Request
+from app.solvers import core, reasons
 from app.solvers.core import req_point
 
 MODE = "benchmark_ortools"
@@ -45,35 +45,19 @@ def _travel_for(eng: Engineer, km: float) -> int:
 
 
 def _eligible(req: Request, engineers: list[Engineer]) -> bool:
-    for e in engineers:
-        if req.skill in e.skills and (not req.required_transport or e.transport == req.required_transport):
-            return True
-    return False
+    return any(reasons.can_serve(req, e) for e in engineers)
 
 
 def solve_ortools(region: str, dist: str, requests: list[Request], engineers: list[Engineer]):
     s = get_settings()
-    unassigned: list[UnassignedReason] = []
-
-    def _reason(req: Request, reason: str) -> UnassignedReason:
-        return UnassignedReason(
-            request_id=req.id,
-            address=req.address,
-            reason=reason,
-            window=[req.window_start, req.window_end],
-            skill_label=req.skill_label,
-        )
 
     # В модель попадают только заявки с координатами, которые может взять хоть один инженер.
+    # Остальные получают причину из reasons.classify ниже — по одному месту на все случаи.
     served = [r for r in requests
               if r.lat is not None and r.lng is not None and _eligible(r, engineers)]
-    for r in requests:
-        if r.lat is None or r.lng is None:
-            unassigned.append(_reason(r, "Нет координат — адрес не геокодирован"))
-        elif not _eligible(r, engineers):
-            unassigned.append(_reason(r, core.reason_for(r, engineers)))
 
     if not engineers or not served:
+        unassigned = [reasons.classify(r, engineers) for r in requests]
         return core.build_plan(region, MODE, dist, [], unassigned, requests)
 
     from ortools.constraint_solver import pywrapcp, routing_enums_pb2
@@ -153,8 +137,14 @@ def solve_ortools(region: str, dist: str, requests: list[Request], engineers: li
         tdim.CumulVar(routing.End(v)).SetRange(shift_a, shift_b)
     for i, req in enumerate(served, start=1):
         tdim.CumulVar(manager.NodeToIndex(i)).SetRange(*_win(req, s))
-    for i in range(1, n):
-        routing.AddDisjunction([manager.NodeToIndex(i)], s.ortools_drop_penalty)
+    # Штраф за пропуск заявки разный для срочных (ТЗ 2.2: срочность важнее).
+    # Повышенный штраф заставляет решатель жертвовать обычной заявкой, а не аварийной,
+    # но остаётся конечным — это не запрет: если срочную взять нечем, она уйдёт
+    # в неназначенные с причиной, а не сломает планирование.
+    urgent_penalty = s.ortools_drop_penalty * max(1, s.ortools_urgent_penalty_factor)
+    for i, req in enumerate(served, start=1):
+        penalty = urgent_penalty if req.priority == "urgent" else s.ortools_drop_penalty
+        routing.AddDisjunction([manager.NodeToIndex(i)], penalty)
 
     params = pywrapcp.DefaultRoutingSearchParameters()
     params.first_solution_strategy = getattr(
@@ -169,8 +159,7 @@ def solve_ortools(region: str, dist: str, requests: list[Request], engineers: li
 
     if solution is None:
         why = f"Решение не найдено за {s.ortools_time_limit} с (ограничения по окнам несовместимы)"
-        for r in served:
-            unassigned.append(_reason(r, why))
+        unassigned = [reasons.note(r, why, reasons.SOLVER_LIMIT) for r in served]
         return core.build_plan(region, MODE, dist, [], unassigned, requests)
 
     routes: dict[str, list[Request]] = {e.id: [] for e in engineers}
@@ -183,9 +172,8 @@ def solve_ortools(region: str, dist: str, requests: list[Request], engineers: li
             index = solution.Value(routing.NextVar(index))
 
     done = {r.id for rs in routes.values() for r in rs}
-    for r in served:
-        if r.id not in done:
-            unassigned.append(_reason(r, core.reason_for(r, engineers)))
+    unassigned = [reasons.classify(r, engineers, reasons.Context(busy=routes, dist=dist))
+                  for r in requests if r.id not in done]
 
     final = []
     for e in engineers:
@@ -194,6 +182,8 @@ def solve_ortools(region: str, dist: str, requests: list[Request], engineers: li
         if reqs and not eng.stops:
             # Модель разошлась с core (не должно быть) — не теряем заявки молча.
             for r in reqs:
-                unassigned.append(_reason(r, core.reason_for(r, engineers)))
+                unassigned.append(reasons.note(
+                    r, "Маршрут из OR-Tools не прошёл проверку core — заявка снята с назначения",
+                    reasons.MODEL_MISMATCH))
         final.append(eng)
     return core.build_plan(region, MODE, dist, final, unassigned, requests)

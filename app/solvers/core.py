@@ -5,7 +5,7 @@
 
 from app import distance as ds
 from app.config import get_settings
-from app.regions import REGIONS, TRANSPORT
+from app.regions import REGIONS
 from app.schemas import (
     Engineer,
     LatLng,
@@ -65,16 +65,26 @@ def feasible(eng: Engineer, reqs: list[Request]) -> bool:
     return schedule_route(eng, reqs) is not None
 
 
-def reason_for(req: Request, engs: list[Engineer]) -> str:
-    with_skill = [e for e in engs if req.skill in e.skills]
-    if not with_skill:
-        return f"Нет инженера с навыком «{req.skill_label}»"
-    if req.required_transport:
-        ok = [e for e in with_skill if e.transport == req.required_transport]
-        if not ok:
-            label = TRANSPORT.get(req.required_transport, {}).get("label", req.required_transport)
-            return f"Нет инженера с навыком «{req.skill_label}» и транспортом «{label}»"
-    return "Заявка не помещается в рабочие окна и смену инженеров"
+def shift_ceiling(reqs: list[Request], engs: list[Engineer], dist: str = "haversine") -> int:
+    """Сколько заявок смена способна выполнить в принципе (ТЗ 2.2 — жёсткие окна).
+
+    Заявка входит в потолок, только если есть координаты, есть инженер с нужным
+    навыком и транспортом, и она помещается в смену целиком — как единственная
+    первая работа. Всё остальное упирается в занятость инженеров, а не в модель
+    ограничений, поэтому именно эта цифра показывает, что улучшать дальше.
+    """
+    ok = 0
+    for req in reqs:
+        if req.lat is None or req.lng is None:
+            continue
+        # Проверка навыка и транспорта продублирована здесь намеренно: reasons
+        # импортирует core, и обратный импорт замкнул бы цикл.
+        fits = any(schedule_route(e, [req], dist) is not None for e in engs
+                   if req.skill in e.skills
+                   and (not req.required_transport or e.transport == req.required_transport))
+        if fits:
+            ok += 1
+    return ok
 
 
 def build_plan(region: str, mode: str, dist: str, engineers: list[Engineer],
