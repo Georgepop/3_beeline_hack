@@ -93,6 +93,13 @@
 
             <!-- Requests -->
             <div class="section-content" id="section-requests">
+                <div class="editor-toolbar">
+                    <button class="btn btn-primary" onclick="openRequestEditor()"><span>＋</span> Добавить заявку</button>
+                    <button class="btn btn-secondary" id="btnPlaceRequest" onclick="startPlacingRequest()"><span>📍</span> Поставить на карте</button>
+                    <button class="btn btn-secondary" id="btnResetData" onclick="openResetDialog()"><span>↺</span> Сбросить данные</button>
+                    <span class="editor-toolbar-spacer"></span>
+                    <span class="db-status" id="dbStatusRequests"></span>
+                </div>
                 <div class="search-row">
                     <input type="text" class="search-box" id="reqSearch" placeholder="🔍 Поиск заявки..." oninput="filterRequests()">
                     <span class="search-hint">Вся заявка = отдельный выезд инженера</span>
@@ -102,6 +109,9 @@
 
             <!-- Engineers -->
             <div class="section-content" id="section-engineers">
+                <div class="editor-toolbar">
+                    <span class="db-status" id="dbStatusEngineers"></span>
+                </div>
                 <div class="list-wrap" id="engineersList"></div>
             </div>
 
@@ -144,6 +154,169 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ===== Заявка: создание и правка ===== -->
+<div class="modal-backdrop" id="reqModal" hidden onclick="if(event.target===this)closeRequestEditor()">
+    <div class="modal">
+        <div class="modal-head">
+            <span id="reqModalTitle">Новая заявка</span>
+            <button class="modal-close" onclick="closeRequestEditor()" title="Закрыть">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Адрес <span class="req">*</span></label>
+                <input type="text" class="form-input" id="reqAddress" placeholder="Москва, ул. Кузьминки, д. 1">
+                <div class="form-hint" id="reqCoordsHint"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Тип заявки</label>
+                    <select class="form-select" id="reqBkType" onchange="syncRequestType()">
+                        <option value="Подключение">Подключение</option>
+                        <option value="Дозаказ">Дозаказ</option>
+                        <option value="Локальная заявка">Локальная заявка</option>
+                        <option value="Глобальная проблема">Глобальная проблема</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Район</label>
+                    <input type="text" class="form-input" id="reqDistrict">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Окно работ <span class="req">*</span></label>
+                    <div class="input-pair">
+                        <input type="time" class="form-input" id="reqWinStart">
+                        <span class="input-sep">—</span>
+                        <input type="time" class="form-input" id="reqWinEnd">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Технология</label>
+                    <select class="form-select" id="reqTech">
+                        <option value="">—</option>
+                        <option value="FMC">FMC</option>
+                        <option value="FTTB">FTTB</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Требование к транспорту</label>
+                    <select class="form-select" id="reqTransport">
+                        <option value="">Без требований</option>
+                        <option value="auto">Автомобиль</option>
+                        <option value="transit">Общественный транспорт</option>
+                        <option value="bike">Велосипед</option>
+                        <option value="walk">Пешком</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Срочность</label>
+                    <select class="form-select" id="reqPriority">
+                        <option value="auto">По типу заявки</option>
+                        <option value="normal">Обычная</option>
+                        <option value="urgent">Срочная</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Норматив работ, мин</label>
+                    <input type="number" class="form-input" id="reqDuration" min="1" step="5">
+                    <div class="form-hint" id="reqDurationHint"></div>
+                </div>
+                <div class="form-group form-group-check">
+                    <label class="form-check"><input type="checkbox" id="reqGigabit"><span>Гигабитный канал</span></label>
+                    <label class="form-check" id="reqActiveWrap"><input type="checkbox" id="reqActive" checked><span>Планировать в следующем рейсе</span></label>
+                </div>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-danger" id="reqDeleteBtn" onclick="deleteRequest()">Удалить</button>
+            <span class="modal-foot-spacer"></span>
+            <button class="btn btn-secondary" onclick="closeRequestEditor()">Отмена</button>
+            <button class="btn btn-primary" id="reqSaveBtn" onclick="saveRequest()">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== Инженер: правка ===== -->
+<div class="modal-backdrop" id="engModal" hidden onclick="if(event.target===this)closeEngineerEditor()">
+    <div class="modal modal-narrow">
+        <div class="modal-head">
+            <span id="engModalTitle">Инженер</span>
+            <button class="modal-close" onclick="closeEngineerEditor()" title="Закрыть">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Имя</label>
+                <input type="text" class="form-input" id="engName">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Навыки</label>
+                <div class="check-grid" id="engSkills"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Транспорт</label>
+                    <select class="form-select" id="engTransport">
+                        <option value="auto">Автомобиль</option>
+                        <option value="transit">Общественный транспорт</option>
+                        <option value="bike">Велосипед</option>
+                        <option value="walk">Пешком</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Скорость, км/ч</label>
+                    <input type="number" class="form-input" id="engSpeed" min="1" step="1" placeholder="из транспорта">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Смена</label>
+                <div class="input-pair">
+                    <input type="time" class="form-input" id="engShiftStart">
+                    <span class="input-sep">—</span>
+                    <input type="time" class="form-input" id="engShiftEnd">
+                </div>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <span class="modal-foot-spacer"></span>
+            <button class="btn btn-secondary" onclick="closeEngineerEditor()">Отмена</button>
+            <button class="btn btn-primary" id="engSaveBtn" onclick="saveEngineer()">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== Сброс к исходным данным ===== -->
+<div class="modal-backdrop" id="resetModal" hidden onclick="if(event.target===this)closeResetDialog()">
+    <div class="modal modal-narrow">
+        <div class="modal-head">
+            <span>Сброс к исходным данным</span>
+            <button class="modal-close" onclick="closeResetDialog()" title="Закрыть">×</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-lead" id="resetLead"></p>
+            <label class="form-check form-check-block">
+                <input type="checkbox" id="resetRequests" checked>
+                <span>Заявки <b id="resetReqCount"></b></span>
+            </label>
+            <label class="form-check form-check-block">
+                <input type="checkbox" id="resetEngineers" checked>
+                <span>Инженеры <b id="resetEngCount"></b></span>
+            </label>
+            <div class="form-hint" id="resetWarn" hidden>Не отмечено ни одного раздела — сбрасывать нечего.</div>
+        </div>
+        <div class="modal-foot">
+            <span class="modal-foot-spacer"></span>
+            <button class="btn btn-secondary" onclick="closeResetDialog()">Отмена</button>
+            <button class="btn btn-primary" id="resetConfirmBtn" onclick="doReset()">Сбросить</button>
+        </div>
+    </div>
+</div>
+
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="app.js"></script>
 </body>

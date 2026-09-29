@@ -286,3 +286,85 @@ select:disabled { opacity: 0.55; cursor: default; }
     display: inline-block; min-width: 20px; text-align: center; padding: 1px 5px;
     border-radius: 10px; font-weight: 700; font-size: 11px;
 }
+
+/* ===== Редактор данных =====
+   Блок правки данных в БД: тулбар, модальные окна, отметки о ручных правках. */
+.btn-danger { background: #fdecea; color: #c0392b; }
+.btn-danger:hover { background: #f8d7d3; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.editor-toolbar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.editor-toolbar-spacer { flex: 1; }
+.db-status { font-size: 12px; color: #7f8c8d; }
+.db-status.dirty { color: #c0392b; font-weight: 600; }
+.db-status .chip {
+    display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 10px;
+    background: #fdecea; color: #c0392b; font-weight: 600;
+}
+.map-btn.edit { background: #eef2f5; color: #2c3e50; }
+.map-btn.edit:hover { background: #dde4ea; }
+.item-card.muted { opacity: 0.72; }
+.item-card.muted:hover { opacity: 1; }
+
+.modal-backdrop {
+    position: fixed; inset: 0; background: rgba(20, 32, 44, 0.45);
+    display: flex; align-items: center; justify-content: center; z-index: 60; padding: 24px;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+    background: white; border-radius: 14px; width: 100%; max-width: 640px;
+    max-height: 90vh; display: flex; flex-direction: column;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+}
+.modal-narrow { max-width: 460px; }
+.modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid #eef1f4; font-size: 15px; font-weight: 700;
+}
+.modal-close {
+    border: none; background: none; font-size: 24px; line-height: 1; cursor: pointer;
+    color: #90a4ae; padding: 0 4px;
+}
+.modal-close:hover { color: #2c3e50; }
+.modal-body { padding: 18px 20px; overflow-y: auto; }
+.modal-lead { margin: 0 0 14px; font-size: 13px; color: #5d6d7e; line-height: 1.5; }
+.modal-foot {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 20px; border-top: 1px solid #eef1f4;
+}
+.modal-foot-spacer { flex: 1; }
+
+.form-input {
+    width: 100%; padding: 9px 11px; border: 1px solid #d5dde3; border-radius: 8px;
+    font-size: 13px; font-family: inherit; color: #2c3e50; background: white;
+}
+.form-input:focus { outline: none; border-color: #2d9c7a; box-shadow: 0 0 0 3px rgba(45, 156, 122, 0.12); }
+.form-hint { font-size: 11px; color: #90a4ae; margin-top: 4px; line-height: 1.4; }
+.form-hint.warn { color: #c0392b; }
+.form-label .req { color: #e74c3c; }
+.input-pair { display: flex; align-items: center; gap: 8px; }
+.input-sep { color: #90a4ae; flex: none; }
+.form-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2c3e50; cursor: pointer; }
+.form-check-block {
+    display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
+    border: 1px solid #eef1f4; border-radius: 9px; margin-bottom: 10px; cursor: pointer;
+}
+.form-check-block:hover { background: #f8fafb; }
+.form-group-check { display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.check-grid { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+
+/* Режим «поставить заявку кликом по карте» */
+.map-placing .maplibregl-canvas { cursor: crosshair !important; }
+.place-banner {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    background: #2c3e50; color: white; padding: 8px 16px; border-radius: 20px;
+    font-size: 12px; font-weight: 600; z-index: 10; display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.place-banner button {
+    background: rgba(255, 255, 255, 0.2); border: none; color: white; cursor: pointer;
+    border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600;
+}
+.place-banner button:hover { background: rgba(255, 255, 255, 0.32); }

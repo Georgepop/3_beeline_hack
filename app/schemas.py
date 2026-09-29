@@ -33,6 +33,9 @@ class Request(BaseModel):
     control_brigade: Optional[str] = None     # бригада контрольного распределения (справочно)
     lat: Optional[float] = None
     lng: Optional[float] = None
+    # Планируется ли заявка в ближайшем рейсе. Отдельное поле, а не вывод по
+    # status: отменённая заявка остаётся в базе и на карте, но вне плана.
+    is_active: bool = True
 
 
 class RoadStop(BaseModel):

@@ -58,6 +58,12 @@ const state = {
     planStartedAt: 0,
     planTimer: null,
     planReqId: 0,        // номер текущего запроса — защита от устаревших ответов
+    // Правка данных в БД.
+    dbStatus: null,      // GET /api/db/status — сколько изменилось против импорта
+    placing: false,      // режим «клик по карте, чтобы поставить заявку»
+    editReqId: null,     // id редактируемой заявки (null = создание новой)
+    editReqCoords: null, // координаты, заданные кликом по карте
+    editEngId: null,     // id редактируемого инженера
     // Геометрия по дорогам приезжает отдельным запросом уже после плана.
     geometryKey: null,   // 'region|mode|dist' — для отбрасывания устаревшего ответа
 };
@@ -175,6 +181,7 @@ function initMap() {
             paint: { 'line-color': ['get', 'color'], 'line-width': ['get', 'w'], 'line-opacity': 0.85 },
         });
         state.map.on('click', 'route-lines', (e) => {
+            if (state.placing) return;   // в режиме постановки клик принадлежит карте, не линии
             const p = e.features[0].properties;
             if (p && p.engIdx != null) focusEngineer(p.engIdx);
         });
@@ -191,6 +198,12 @@ function initMap() {
             state.map.getCanvas().style.cursor = '';
             state.tip.remove();
             state.tipShown = false;
+        });
+        // Клик по карте в режиме «поставить заявку». Вешаем на канвас, а не на
+        // слой маршрутов: клик должен ловиться в любом месте, включая поверх
+        // точек и линий.
+        state.map.on('click', (e) => {
+            if (state.placing) placeRequestAt(e.lngLat);
         });
         if (state.plan) renderMap();
     });
@@ -266,21 +279,28 @@ async function loadPlan() {
     const sel = { region: state.region, mode: state.mode, dist: state.dist };
     startPlanLoading();
     try {
-        const [plan, requests, engineers] = await Promise.all([
+        const [plan, requests, engineers, dbStatus] = await Promise.all([
             api(`/api/plan?region=${sel.region}&mode=${sel.mode}&dist=${sel.dist}`, { signal: ctrl.signal }),
             api(`/api/requests?region=${sel.region}`, { signal: ctrl.signal }),
             api(`/api/engineers?region=${sel.region}`, { signal: ctrl.signal }),
+            // Счётчики правок едем вместе с планом: и смена региона, и любая
+            // правка данных проходят через loadPlan, поэтому статус не может
+            // разъехаться с данными. Отдельной ошибкой не роняем план.
+            api(`/api/db/status?region=${sel.region}`, { signal: ctrl.signal })
+                .catch(() => null),
         ]);
         if (reqId !== state.planReqId) return;   // пока считалось, успели переключить
         state.plan = plan;
         state.requests = requests;
         state.engineers = engineers;
+        state.dbStatus = dbStatus;
         state.lastScenario = null;
         state.selectedEng = null;
         state.hiddenStatuses = new Set();
         state.legendList = [...new Set(requests.map(r => r.status).filter(Boolean))];
         closeExplain();  // план пересчитан — прежнее объяснение больше не про этот план
         renderAll();
+        renderDbStatus();
         // Полилинии по дорогам — отдельный запрос, уже после отрисовки плана:
         // карта сначала рисует прямые линии, потом заменяет их дорожными.
         loadGeometry(sel, reqId);
@@ -902,6 +922,7 @@ function renderRequests() {
                 <div class="item-icon" style="background:#e8f5f0;color:#2d9c7a;">✓</div>
                 <div class="item-title">${esc(s.request_id)} — ${esc(s.address)}</div>
                 <div class="status status-done">${esc(s.window[0])}–${esc(s.window[1])}</div>
+                <button class="map-btn edit" onclick="event.stopPropagation();openRequestEditor('${esc(s.request_id)}')">Изменить</button>
                 <button class="map-btn" onclick="showRequestOnMap('${esc(s.request_id)}', event)">Карта</button>
             </div>
             <div class="item-meta">
@@ -922,6 +943,7 @@ function renderRequests() {
                 <div class="item-icon" style="background:#fde8e8;color:#e74c3c;">✕</div>
                 <div class="item-title">${esc(u.request_id)} — ${esc(u.address)}</div>
                 <div class="status status-error">не назначена</div>
+                <button class="map-btn edit" onclick="event.stopPropagation();openRequestEditor('${esc(u.request_id)}')">Изменить</button>
                 <button class="map-btn" onclick="showRequestOnMap('${esc(u.request_id)}', event)">Карта</button>
             </div>
             <div class="item-meta">
@@ -937,15 +959,39 @@ function renderRequests() {
     // Справочно: все заявки источника (статусы/контроль), не вошедшие в план.
     const inPlan = new Set([...assigned.map(s => s.request_id), ...unassigned.map(u => u.request_id)]);
     const rest = state.requests.filter(r => !inPlan.has(r.id) && pass(r, q));
-    if (rest.length) {
-        html += '<div class="group-title">Справочно (источник): ' + rest.length + '</div>';
-        rest.forEach(r => {
+    // Отменённые показываем отдельно: они не планируются намеренно, и вернуть
+    // их в рейс можно только отсюда — сняв галочку в редакторе.
+    const cancelled = rest.filter(r => r.is_active === false);
+    const other = rest.filter(r => r.is_active !== false);
+    if (cancelled.length) {
+        html += '<div class="group-title">Отменённые (' + cancelled.length + ')</div>';
+        cancelled.forEach(r => {
+            html += `
+            <div class="item-card clickable muted" onclick="explainRequest('${esc(r.id)}')">
+                <div class="item-header">
+                    <div class="item-icon" style="background:#eef2f5;color:#90a4ae;">⊘</div>
+                    <div class="item-title">${esc(r.id)} — ${esc(r.address)}</div>
+                    <div class="status status-pending">не планируется</div>
+                    <button class="map-btn edit" onclick="event.stopPropagation();openRequestEditor('${esc(r.id)}')">Вернуть в план</button>
+                    <button class="map-btn" onclick="showRequestOnMap('${esc(r.id)}', event)">Карта</button>
+                </div>
+                <div class="item-meta">
+                    <span>${esc(r.skill_label)} ${esc(r.bk_type)}</span>
+                    <span>Окно ${esc(r.window_start)}–${esc(r.window_end)}</span>
+                </div>
+            </div>`;
+        });
+    }
+    if (other.length) {
+        html += '<div class="group-title">Справочно (источник): ' + other.length + '</div>';
+        other.forEach(r => {
             html += `
             <div class="item-card clickable" onclick="explainRequest('${esc(r.id)}')">
                 <div class="item-header">
                     <div class="item-icon" style="background:#eef2f5;color:#90a4ae;">·</div>
                     <div class="item-title">${esc(r.id)} — ${esc(r.address)}</div>
                     <div class="status status-pending">${statusChip(r.status)}</div>
+                    <button class="map-btn edit" onclick="event.stopPropagation();openRequestEditor('${esc(r.id)}')">Изменить</button>
                     <button class="map-btn" onclick="showRequestOnMap('${esc(r.id)}', event)">Карта</button>
                 </div>
                 <div class="item-meta">
@@ -983,6 +1029,7 @@ function renderEngineers() {
                 <div class="item-icon" style="background:${inPlan ? '#e8f5f0' : '#f0f4f8'};color:${inPlan ? '#2d9c7a' : '#95a5a6'};">${inPlan ? '✓' : '—'}</div>
                 <div class="item-title">${esc(e.name)}</div>
                 <div class="status ${inPlan ? 'status-done' : 'status-pending'}">${inPlan ? 'в рейсе' : 'свободен'}</div>
+                <button class="map-btn edit" onclick="event.stopPropagation();openEngineerEditor('${esc(e.id)}')">Изменить</button>
             </div>
             <div class="item-meta">
                 <span>${TRANSPORT_ICON[e.transport] || '🚶'} ${esc(e.transport_label)}</span>
@@ -1102,5 +1149,362 @@ function unassignedIconHtml() {
 function statusIconHtml(color) {
     return `<div class="status-ico" style="border-color:${color};color:${color};">◉</div>`;
 }
+
+// ===== Правка данных в БД =====
+
+// Типы заявок и нормативы дублируют app/regions.py: справочник живёт на
+// сервере, а здесь нужен для подсказок и предзаполнения формы. Источник
+// истины — норматив, который выставляет сервер, поэтому подсказка помечена
+// «по типу», а не задаёт значение жёстко.
+const BK_TYPES = [
+    { value: 'Подключение', min: 100, skill: 'Подключение и дозаказы' },
+    { value: 'Дозаказ', min: 90, skill: 'Подключение и дозаказы' },
+    { value: 'Локальная заявка', min: 50, skill: 'Локальные работы' },
+    { value: 'Глобальная проблема', min: 40, skill: 'Аварийные работы' },
+];
+const SKILL_KEYS = [
+    { key: 'podklyuchenie', label: 'Подключение и дозаказы' },
+    { key: 'lokalnye', label: 'Локальные работы' },
+    { key: 'avariynye', label: 'Аварийные работы' },
+];
+const TRANSPORT_KEYS = [
+    { key: 'auto', label: 'Автомобиль' },
+    { key: 'transit', label: 'Общественный транспорт' },
+    { key: 'bike', label: 'Велосипед' },
+    { key: 'walk', label: 'Пешком' },
+];
+
+function typeNorm(bkType) {
+    const t = BK_TYPES.find(x => x.value === bkType);
+    return t ? t.min : 60;
+}
+
+function syncRequestType() {
+    // Подсказка, а не запрет: норматив можно задать вручную, если дом длинный.
+    $('reqDurationHint').textContent = 'По типу заявки: ' + typeNorm($('reqBkType').value) + ' мин';
+}
+
+// --- Заявка ---
+
+function openRequestEditor(id = null, coords = null) {
+    state.editReqId = id;
+    state.editReqCoords = coords;
+    const req = id ? state.requests.find(r => r.id === id) : null;
+
+    $('reqModalTitle').textContent = req ? `Заявка ${id}` : 'Новая заявка';
+    $('reqAddress').value = req ? req.address : (coords?.address || '');
+    $('reqDistrict').value = req ? (req.district || '') : (coords?.district || '');
+    $('reqBkType').value = req ? req.bk_type : 'Локальная заявка';
+    $('reqWinStart').value = req ? (req.window_start || '') : '09:00';
+    $('reqWinEnd').value = req ? (req.window_end || '') : '18:00';
+    $('reqTech').value = req ? (req.tech || '') : '';
+    $('reqTransport').value = req ? (req.required_transport || '') : '';
+    $('reqGigabit').checked = !!req?.gigabit;
+    $('reqActive').checked = req ? req.is_active !== false : true;
+    // У отменённой заявки приоритет и норматив надо показать как есть, а не
+    // предлагать значения по умолчанию.
+    $('reqPriority').value = req ? (req.priority || 'normal') : 'auto';
+    $('reqDuration').value = req ? (req.duration_min || '') : '';
+    $('reqDeleteBtn').hidden = !req;
+    $('reqActiveWrap').hidden = !req;   // у новой заявки отменять нечего
+    $('reqSaveBtn').textContent = req ? 'Сохранить' : 'Создать';
+
+    syncCoordsHint(req, coords);
+    syncRequestType();
+    $('reqModal').hidden = false;
+    setTimeout(() => $('reqAddress').focus(), 0);
+}
+
+function syncCoordsHint(req, coords) {
+    const hint = $('reqCoordsHint');
+    const lat = req ? req.lat : coords?.lat;
+    const lng = req ? req.lng : coords?.lng;
+    if (lat == null || lng == null) {
+        hint.textContent = 'Координат нет — сервер определит их по адресу.';
+        hint.classList.remove('warn');
+        return;
+    }
+    let text = `Координаты: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    // Обратное геокодирование отдаёт ближайший объект, а не точный дом, поэтому
+    // адрес из клика всегда стоит проверить глазами до сохранения.
+    if (coords) {
+        text += ' — из клика по карте';
+        if (coords.address) {
+            text += '. Рядом может быть соседний дом — проверьте адрес.';
+            hint.classList.add('warn');
+        }
+    }
+    hint.textContent = text;
+    if (!coords) hint.classList.remove('warn');
+}
+
+function closeRequestEditor() {
+    $('reqModal').hidden = true;
+    state.editReqId = null;
+    state.editReqCoords = null;
+}
+
+async function saveRequest() {
+    const id = state.editReqId;
+    const address = $('reqAddress').value.trim();
+    if (!address) { toast('Укажите адрес', 'error'); $('reqAddress').focus(); return; }
+    const winStart = $('reqWinStart').value;
+    const winEnd = $('reqWinEnd').value;
+    if (!winStart || !winEnd) { toast('Укажите окно работ: обе границы', 'error'); return; }
+
+    const body = {
+        address,
+        bk_type: $('reqBkType').value,
+        district: $('reqDistrict').value.trim(),
+        window_start: winStart,
+        window_end: winEnd,
+        tech: $('reqTech').value || null,
+        required_transport: $('reqTransport').value || null,
+        gigabit: $('reqGigabit').checked,
+    };
+    const dur = $('reqDuration').value.trim();
+    if (dur) body.duration_min = Number(dur);
+    if ($('reqPriority').value !== 'auto') body.priority = $('reqPriority').value;
+    if (id) body.is_active = $('reqActive').checked;
+
+    $('reqSaveBtn').disabled = true;
+    try {
+        if (id) {
+            await api(`/api/requests/${encodeURIComponent(id)}?region=${state.region}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            toast('Заявка сохранена');
+        } else {
+            const payload = { ...body };
+            if (state.editReqCoords) {
+                payload.lat = state.editReqCoords.lat;
+                payload.lng = state.editReqCoords.lng;
+            }
+            await api(`/api/requests?region=${state.region}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            toast('Заявка добавлена');
+        }
+        closeRequestEditor();
+        await afterMutation();
+    } catch (e) {
+        toast('Не сохранено: ' + e.message, 'error');
+    } finally {
+        $('reqSaveBtn').disabled = false;
+    }
+}
+
+async function deleteRequest() {
+    const id = state.editReqId;
+    if (!id) return;
+    if (!confirm(`Удалить заявку ${id}? Действие необратимо до сброса данных.`)) return;
+    try {
+        await api(`/api/requests/${encodeURIComponent(id)}?region=${state.region}`, { method: 'DELETE' });
+        toast('Заявка удалена');
+        closeRequestEditor();
+        await afterMutation();
+    } catch (e) {
+        toast('Не удалено: ' + e.message, 'error');
+    }
+}
+
+// --- Постановка заявки кликом по карте ---
+
+function startPlacingRequest() {
+    state.placing = true;
+    switchSection('routes', null);
+    $('mainMap').classList.add('map-placing');
+    showPlaceBanner(true);
+    showMapHint('📍 Кликните по карте, чтобы поставить заявку в этом месте');
+}
+
+function showPlaceBanner(on) {
+    let b = $('placeBanner');
+    if (!on) { if (b) b.remove(); $('btnPlaceRequest')?.classList.remove('active'); return; }
+    if (!b) {
+        b = document.createElement('div');
+        b.id = 'placeBanner';
+        b.className = 'place-banner';
+        b.innerHTML = '<span>Кликните по карте, чтобы поставить заявку</span>' +
+            '<button onclick="stopPlacingRequest()">Отмена</button>';
+        $('mainMap').parentElement.appendChild(b);
+    }
+}
+
+function stopPlacingRequest() {
+    state.placing = false;
+    $('mainMap')?.classList.remove('map-placing');
+    showPlaceBanner(false);
+}
+
+async function placeRequestAt(lngLat) {
+    stopPlacingRequest();
+    const lat = lngLat.lat, lng = lngLat.lng;
+    showMapHint('📍 Определяем адрес…');
+    let rev = { ok: false, address: '', district: '' };
+    try {
+        rev = await api('/api/geo/reverse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat, lng }),
+        });
+    } catch (e) {
+        // Обратное геокодирование — необязательный шаг: клик по карте уже дал
+        // координаты, поэтому неудача с сетью не должна срывать постановку.
+        toast('Адрес не определился, впишите его вручную', 'error');
+    }
+    openRequestEditor(null, { lat, lng, address: rev.address || '', district: rev.district || '' });
+}
+
+// --- Инженер ---
+
+function openEngineerEditor(id) {
+    const eng = state.engineers.find(e => e.id === id);
+    if (!eng) { toast('Инженер не найден', 'error'); return; }
+    state.editEngId = id;
+    $('engModalTitle').textContent = `${eng.name}`;
+    $('engName').value = eng.name || '';
+    $('engTransport').value = eng.transport || 'auto';
+    $('engSpeed').value = eng.speed_kph == null ? '' : eng.speed_kph;
+    $('engShiftStart').value = eng.shift_start || '08:00';
+    $('engShiftEnd').value = eng.shift_end || '20:00';
+    $('engSkills').innerHTML = SKILL_KEYS.map(s => `
+        <label class="form-check"><input type="checkbox" value="${esc(s.key)}"${eng.skills.includes(s.key) ? ' checked' : ''}><span>${esc(s.label)}</span></label>
+    `).join('');
+    $('engModal').hidden = false;
+}
+
+function closeEngineerEditor() {
+    $('engModal').hidden = true;
+    state.editEngId = null;
+}
+
+async function saveEngineer() {
+    const id = state.editEngId;
+    if (!id) return;
+    const skills = [...$('engSkills').querySelectorAll('input:checked')].map(i => i.value);
+    const body = {
+        name: $('engName').value.trim(),
+        skills,
+        transport: $('engTransport').value,
+        shift_start: $('engShiftStart').value,
+        shift_end: $('engShiftEnd').value,
+    };
+    const sp = $('engSpeed').value.trim();
+    body.speed_kph = sp ? Number(sp) : null;
+    $('engSaveBtn').disabled = true;
+    try {
+        await api(`/api/engineers/${encodeURIComponent(id)}?region=${state.region}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        toast('Инженер сохранён');
+        closeEngineerEditor();
+        await afterMutation();
+    } catch (e) {
+        toast('Не сохранено: ' + e.message, 'error');
+    } finally {
+        $('engSaveBtn').disabled = false;
+    }
+}
+
+// --- Сброс к исходным данным ---
+
+function openResetDialog() {
+    const st = state.dbStatus;
+    const r = st?.requests, e = st?.engineers;
+    $('resetLead').innerHTML = st
+        ? `В регионе «${esc(st.region_name || state.region)}» относительно импорта: ` +
+          `заявок <b>добавлено ${r.added}</b>, <b>изменено ${r.edited}</b>, <b>удалено ${r.deleted}</b>; ` +
+          `инженеров изменено <b>${e.edited}</b>. Отметьте, что вернуть к исходному виду.`
+        : 'Отметьте, что вернуть к исходному виду.';
+    $('resetRequests').checked = true;
+    $('resetEngineers').checked = true;
+    $('resetReqCount').textContent = r ? `(в базе ${r.total})` : '';
+    $('resetEngCount').textContent = e ? `(в базе ${e.total})` : '';
+    $('resetModal').hidden = false;
+    updateResetConfirm();
+}
+
+function closeResetDialog() {
+    $('resetModal').hidden = true;
+}
+
+function updateResetConfirm() {
+    const any = $('resetRequests').checked || $('resetEngineers').checked;
+    $('resetConfirmBtn').disabled = !any;
+    $('resetWarn').hidden = any;
+}
+
+async function doReset() {
+    const body = { requests: $('resetRequests').checked, engineers: $('resetEngineers').checked };
+    if (!body.requests && !body.engineers) { toast('Отметьте заявки или инженеров', 'error'); return; }
+    $('resetConfirmBtn').disabled = true;
+    try {
+        const r = await api(`/api/db/reset?region=${state.region}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const what = [];
+        if (body.requests) what.push(`заявок — ${r.requests.total}`);
+        if (body.engineers) what.push(`инженеров — ${r.engineers.total}`);
+        toast('Возвращено к импорту: ' + what.join(', '));
+        closeResetDialog();
+        await afterMutation();
+    } catch (e) {
+        toast('Не сброшено: ' + e.message, 'error');
+    } finally {
+        $('resetConfirmBtn').disabled = false;
+    }
+}
+
+// --- Общее после любой правки ---
+// План пересчитывается целиком: кеш ключуется отпечатком данных и после
+// правки промахивается сам, поэтому ручного сброса кеша здесь нет.
+
+async function afterMutation() {
+    await loadPlan();
+}
+
+function renderDbStatus() {
+    const st = state.dbStatus;
+    const chip = (c, label) => c
+        ? `<span class="chip">${label}: +${c.added} ~${c.edited} −${c.deleted}</span>` : '';
+    for (const [el, c, label] of [
+        ['dbStatusRequests', st?.requests, 'заявки'],
+        ['dbStatusEngineers', st?.engineers, 'инженеры'],
+    ]) {
+        const node = $(el);
+        if (!node) continue;
+        node.className = 'db-status' + (st?.dirty ? ' dirty' : '');
+        node.innerHTML = st
+            ? (c ? `Правлено ${label} ${chip(c, label)}` : `Правлено ${label}: нет`)
+            : '';
+    }
+    const btn = $('btnResetData');
+    if (btn) {
+        btn.disabled = !(st && st.dirty);
+        btn.title = st && st.dirty
+            ? 'Вернуть импортированные значения'
+            : 'Правок нет — сбрасывать нечего';
+    }
+}
+
+// Esc закрывает открытую форму — привычно и не требует тянуться к мыши.
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('reqModal').hidden) closeRequestEditor();
+    else if (!$('engModal').hidden) closeEngineerEditor();
+    else if (!$('resetModal').hidden) closeResetDialog();
+    else if (state.placing) stopPlacingRequest();
+});
+$('resetRequests').addEventListener('change', updateResetConfirm);
+$('resetEngineers').addEventListener('change', updateResetConfirm);
 
 init();

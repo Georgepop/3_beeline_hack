@@ -23,6 +23,9 @@ _REQ_COLS = (
     "id", "bk_type", "hd_type", "skill", "window_start", "window_end",
     "district", "address", "tech", "gigabit", "priority", "duration_min",
     "required_transport", "status", "control_brigade", "lat", "lng",
+    # is_active тоже в списке: отмена заявки — правка, и без неё сброс к
+    # импорту не предложил бы вернуть отменённую заявку обратно.
+    "is_active",
 )
 
 _ENG_COLS = (
