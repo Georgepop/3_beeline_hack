@@ -98,7 +98,7 @@ function planLoadingText() {
 function startPlanLoading() {
     state.planLoading = true;
     state.planStartedAt = Date.now();
-    ['region', 'mode', 'dist'].forEach(id => { if ($(id)) $(id).disabled = true; });
+    ['region', 'mode'].forEach(id => { if ($(id)) $(id).disabled = true; });
     if ($('btnRefresh')) $('btnRefresh').disabled = true;
     if ($('planLoader')) $('planLoader').hidden = false;
     clearInterval(state.planTimer);
@@ -112,7 +112,7 @@ function stopPlanLoading() {
     state.planLoading = false;
     clearInterval(state.planTimer);
     state.planTimer = null;
-    ['region', 'mode', 'dist'].forEach(id => { if ($(id)) $(id).disabled = false; });
+    ['region', 'mode'].forEach(id => { if ($(id)) $(id).disabled = false; });
     if ($('btnRefresh')) $('btnRefresh').disabled = false;
     if ($('planLoader')) $('planLoader').hidden = true;
 }
@@ -144,7 +144,6 @@ async function init() {
         state.region = settings.region;
         state.mode = settings.solver_mode;
         state.dist = settings.dist_mode;
-        $('dist').value = state.dist;
         await fillSolvers();
 
         state.regions = await api('/api/regions');
@@ -258,12 +257,14 @@ async function onSettingsChange() {
 async function applySettings() {
     state.region = $('region').value;
     state.mode = $('mode').value;
-    state.dist = $('dist').value;
     try {
+        // dist_mode не отправляем: переключателя расчёта в интерфейсе нет,
+        // а значение приходит с сервера. Расписание в любом случае считается
+        // на haversine — см. /api/plan/geometry в app/api.py.
         await api('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ region: state.region, solver_mode: state.mode, dist_mode: state.dist }),
+            body: JSON.stringify({ region: state.region, solver_mode: state.mode }),
         });
         await loadPlan();
     } catch (e) {
