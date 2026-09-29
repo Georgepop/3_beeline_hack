@@ -177,21 +177,116 @@ class RegionMeta(BaseModel):
     engineers: int = 0
 
 
+# --- Правка данных в БД (заход 3) ---
+
+class RequestDraft(BaseModel):
+    """Новая заявка.
+
+    Обязательны адрес и окно работ. Навык, норматив работ и срочность выводятся
+    из типа заявки по справочникам, ровно как при импорте CSV. Координаты
+    необязательны: если их нет, адрес геокодируется на сервере.
+    """
+    address: str
+    bk_type: str = "Локальная заявка"
+    hd_type: str = ""
+    district: str = ""
+    window_start: str = ""
+    window_end: str = ""
+    tech: Optional[str] = None
+    gigabit: bool = False
+    priority: Optional[str] = None        # None = вывести по типу заявки
+    duration_min: Optional[int] = None    # None = норматив по типу заявки
+    required_transport: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class RequestPatch(BaseModel):
+    """Частичная правка заявки: unset-поля не трогаются.
+
+    is_active=False равносильно отмене — заявка остаётся в базе и на карте, но
+    не попадает в план (так же работают статусы в исходных данных).
+    """
+    address: Optional[str] = None
+    bk_type: Optional[str] = None
+    hd_type: Optional[str] = None
+    district: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    tech: Optional[str] = None
+    gigabit: Optional[bool] = None
+    priority: Optional[str] = None
+    duration_min: Optional[int] = None
+    required_transport: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
+class EngineerPatch(BaseModel):
+    """Правка инженера: смена, транспорт, навыки, скорость."""
+    name: Optional[str] = None
+    skills: Optional[list[str]] = None
+    transport: Optional[str] = None
+    speed_kph: Optional[float] = None
+    shift_start: Optional[str] = None
+    shift_end: Optional[str] = None
+
+
+class ResetIn(BaseModel):
+    """Сброс к импортированному состоянию. Галочки выбирает пользователь,
+    по умолчанию сбрасываются и заявки, и инженеры."""
+    requests: bool = True
+    engineers: bool = True
+
+
+class EditCounts(BaseModel):
+    added: int = 0
+    edited: int = 0
+    deleted: int = 0
+    total: int = 0
+
+
+class DbStatus(BaseModel):
+    """Что изменилось относительно импорта — этим же считаем, можно ли сбрасывать."""
+    region: str
+    region_name: str = ""
+    requests: EditCounts
+    engineers: EditCounts
+    dirty: bool = False
+
+
+class GeoReverseIn(BaseModel):
+    lat: float
+    lng: float
+
+
+class GeoReverseOut(BaseModel):
+    """Обратное геокодирование клика по карте.
+
+    Точного адреса у координаты нет — возвращаем ближайший (обычно это соседний
+    дом), поэтому поле ok=False означает «не нашли, введите адрес вручную»,
+    а не ошибку сервера.
+    """
+    ok: bool
+    address: str = ""
+    district: str = ""
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
 SolverMode = Literal["baseline_fifo", "improved", "benchmark_ortools"]
 DistMode = Literal["haversine", "osrm"]
-DataSource = Literal["mock", "csv", "remote", "db"]
 RegionId = Literal["vostok", "yugo_vostok", "yugocentr"]
 
 
 class SettingsIn(BaseModel):
     solver_mode: Optional[SolverMode] = None
     dist_mode: Optional[DistMode] = None
-    data_source: Optional[DataSource] = None
     region: Optional[RegionId] = None
 
 
 class SettingsOut(BaseModel):
     solver_mode: SolverMode = "improved"
     dist_mode: DistMode = "haversine"
-    data_source: DataSource = "csv"
     region: RegionId = "vostok"

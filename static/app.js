@@ -32,7 +32,6 @@ const state = {
     region: 'vostok',
     mode: 'improved',
     dist: 'haversine',
-    source: 'csv',
     regions: [],
     plan: null,        // PlanResponse
     requests: [],      // Request[]
@@ -93,7 +92,7 @@ function planLoadingText() {
 function startPlanLoading() {
     state.planLoading = true;
     state.planStartedAt = Date.now();
-    ['region', 'mode', 'dist', 'source'].forEach(id => { if ($(id)) $(id).disabled = true; });
+    ['region', 'mode', 'dist'].forEach(id => { if ($(id)) $(id).disabled = true; });
     if ($('btnPlan')) $('btnPlan').disabled = true;
     if ($('planLoader')) $('planLoader').hidden = false;
     clearInterval(state.planTimer);
@@ -107,7 +106,7 @@ function stopPlanLoading() {
     state.planLoading = false;
     clearInterval(state.planTimer);
     state.planTimer = null;
-    ['region', 'mode', 'dist', 'source'].forEach(id => { if ($(id)) $(id).disabled = false; });
+    ['region', 'mode', 'dist'].forEach(id => { if ($(id)) $(id).disabled = false; });
     if ($('btnPlan')) $('btnPlan').disabled = false;
     if ($('planLoader')) $('planLoader').hidden = true;
 }
@@ -139,8 +138,6 @@ async function init() {
         state.region = settings.region;
         state.mode = settings.solver_mode;
         state.dist = settings.dist_mode;
-        state.source = settings.data_source || 'csv';
-        $('source').value = state.source;
         $('dist').value = state.dist;
         await fillSolvers();
 
@@ -249,12 +246,11 @@ async function applySettings() {
     state.region = $('region').value;
     state.mode = $('mode').value;
     state.dist = $('dist').value;
-    state.source = $('source').value;
     try {
         await api('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ region: state.region, solver_mode: state.mode, dist_mode: state.dist, data_source: state.source }),
+            body: JSON.stringify({ region: state.region, solver_mode: state.mode, dist_mode: state.dist }),
         });
         await loadPlan();
     } catch (e) {

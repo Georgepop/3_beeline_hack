@@ -4,21 +4,30 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query
 
+from app import db
 from app import explain as explain_mod
-from app import mock
 from app import planner
+from app import repository
 from app.config import get_settings
 from app.regions import REGIONS
 from app.schemas import (
+    DbStatus,
     DistMode,
+    EditCounts,
     Engineer,
+    EngineerPatch,
     EngineerRoute,
     GeometryResponse,
+    GeoReverseIn,
+    GeoReverseOut,
     PlanResponse,
     RegionId,
     RegionMeta,
     Request,
+    RequestDraft,
     RequestExplanation,
+    RequestPatch,
+    ResetIn,
     ScenarioEvent,
     ScenarioResult,
     SettingsIn,
@@ -34,12 +43,11 @@ SOLVER_LABELS = {
 }
 
 # Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
-# Инициализация и изменение синхронизируются с get_settings(), чтобы источники/
-# солверы видели тот же data_source.
+# Инициализация и изменение синхронизируются с get_settings(), чтобы солверы
+# видели те же region/mode/dist.
 _runtime = SettingsOut(
     solver_mode=get_settings().solver_mode,
     dist_mode=get_settings().dist_mode,
-    data_source=get_settings().data_source,
     region=get_settings().region,
 )
 
@@ -49,40 +57,18 @@ def _settings() -> SettingsOut:
 
 
 def _region_box(region: str) -> RegionMeta:
-    ds = get_settings().data_source
-    if ds == "remote":
-        from app import remote_source
-        from app.schemas import LatLng
-
-        r = remote_source.load_region(region)
-        return RegionMeta(
-            id=region,
-            name=r["region_name"],
-            office_address=r.get("office_address", ""),
-            office=LatLng(**r["office"]),
-            requests=len(r["requests"]),
-            engineers=len(r["engineers"]),
-        )
-    if ds in ("csv", "db"):
-        from app.data_source import load_region
-        from app.schemas import LatLng
-
-        r = load_region(region)
-        return RegionMeta(
-            id=region,
-            name=r["region_name"],
-            office_address=r["office_address"],
-            office=LatLng(**r["office"]),
-            requests=len(r["requests"]),
-            engineers=len(r["engineers"]),
-        )
-    meta = next(m for m in mock.list_regions() if m.id == region)
+    meta = repository.region_meta(region)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Регион {region} не найден в базе")
     return meta
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version="0.1.0")
+    # БД готова к работе всегда: на пустой импортируем из CSV, иначе приложение
+    # поднялось бы с пустыми регионами и тихо считало бы нечего.
+    db.ensure_initialized()
 
     @app.get("/api/health")
     def health():
@@ -94,9 +80,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/requests", response_model=list[Request])
     def requests(region: RegionId = Query(default=_settings().region)):
-        if get_settings().data_source == "remote":
-            from app import remote_source
-            return remote_source.requests_for(region)  # все точки: статусы/контроль — справочно
+        # active=False: карте и спискам нужны и те заявки, что не планируются.
         reqs, _ = planner.dataset(region, active=False)
         return reqs
 
@@ -114,6 +98,140 @@ def create_app() -> FastAPI:
             {"name": n, "label": SOLVER_LABELS.get(n, n), "enabled": solver_available(n)}
             for n in solver_names()
         ]
+
+    # --- Правка данных (БД) ---
+    #
+    # После любой правки кеш плана промахивается сам: отпечаток в app/session.py
+    # считается по данным, а данные берутся из repository. Поэтому ручных
+    # invalidate здесь нет — иначе легко забыть один из путей и показать
+    # пользователю план, посчитанный до правки.
+
+    @app.post("/api/requests", response_model=Request)
+    def create_request(draft: RequestDraft,
+                       region: RegionId = Query(default=_settings().region)):
+        _region_box(region)
+        address = (draft.address or "").strip()
+        if not address:
+            raise HTTPException(status_code=400, detail="Укажите адрес заявки")
+        payload = draft.model_dump()
+        if payload.get("lat") is None or payload.get("lng") is None:
+            # Адрес без координат солвер планировать не сможет, поэтому геокодируем
+            # сами. Не нашли — не отказываем: заявка останется на карте кликом.
+            from app import geo
+
+            coord = geo.geocode(address, draft.district or "")
+            if coord:
+                payload["lat"], payload["lng"] = coord[0], coord[1]
+        try:
+            return repository.create_request(region, payload)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.patch("/api/requests/{request_id}", response_model=Request)
+    def patch_request(request_id: str, patch: RequestPatch,
+                      region: RegionId = Query(default=_settings().region)):
+        _region_box(region)
+        changed = patch.model_dump(exclude_unset=True, exclude_none=True)
+        try:
+            out = repository.update_request(region, request_id, changed)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if out is None:
+            raise HTTPException(
+                status_code=404, detail=f"Заявка {request_id} не найдена в регионе {region}"
+            )
+        return out
+
+    @app.delete("/api/requests/{request_id}")
+    def drop_request(request_id: str,
+                     region: RegionId = Query(default=_settings().region)):
+        _region_box(region)
+        if not repository.delete_request(region, request_id):
+            raise HTTPException(
+                status_code=404, detail=f"Заявка {request_id} не найдена в регионе {region}"
+            )
+        return {"deleted": request_id}
+
+    @app.patch("/api/engineers/{engineer_id}", response_model=Engineer)
+    def patch_engineer(engineer_id: str, patch: EngineerPatch,
+                       region: RegionId = Query(default=_settings().region)):
+        _region_box(region)
+        changed = patch.model_dump(exclude_unset=True, exclude_none=True)
+        for k in ("skills", "transport"):
+            if k in changed and changed[k] not in (None, "", []):
+                from app.regions import SKILLS, TRANSPORT
+
+                table = SKILLS if k == "skills" else TRANSPORT
+                values = changed[k] if k == "skills" else [changed[k]]
+                for v in values:
+                    if v not in table:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Неизвестное значение {k}={v}",
+                        )
+        if "shift_start" in changed or "shift_end" in changed:
+            from app.distance import parse_hhmm, to_hhmm
+
+            cur = repository.get_engineer(region, engineer_id)
+            if cur is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Инженер {engineer_id} не найден в регионе {region}",
+                )
+            start = changed.get("shift_start", cur.shift_start)
+            end = changed.get("shift_end", cur.shift_end)
+            if parse_hhmm(end) <= parse_hhmm(start):
+                raise HTTPException(
+                    status_code=400, detail=f"Смена {start}-{end} пустая или вывернута"
+                )
+            changed.setdefault("shift_start", to_hhmm(parse_hhmm(start)))
+            changed.setdefault("shift_end", to_hhmm(parse_hhmm(end)))
+        out = repository.update_engineer(region, engineer_id, changed)
+        if out is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Инженер {engineer_id} не найден в регионе {region}",
+            )
+        return out
+
+    @app.get("/api/db/status", response_model=DbStatus)
+    def db_status(region: RegionId = Query(default=_settings().region)):
+        meta = _region_box(region)
+        st = repository.edit_status(region)
+        req, eng = st["requests"], st["engineers"]
+        return DbStatus(
+            region=region,
+            region_name=meta.name,
+            requests=EditCounts(**req),
+            engineers=EditCounts(**eng),
+            dirty=any(
+                v for v in (req["added"], req["edited"], req["deleted"],
+                            eng["added"], eng["edited"], eng["deleted"])
+            ),
+        )
+
+    @app.post("/api/db/reset")
+    def db_reset(body: ResetIn,
+                 region: RegionId = Query(default=_settings().region)):
+        _region_box(region)
+        if not (body.requests or body.engineers):
+            raise HTTPException(
+                status_code=400, detail="Отметьте хотя бы заявки или инженеров"
+            )
+        with db.session_scope() as s:
+            repository.reset_region(s, region, body.requests, body.engineers)
+        st = repository.edit_status(region)
+        return {
+            "reset": {"requests": body.requests, "engineers": body.engineers},
+            "requests": st["requests"],
+            "engineers": st["engineers"],
+        }
+
+    @app.post("/api/geo/reverse", response_model=GeoReverseOut)
+    def geo_reverse(body: GeoReverseIn):
+        from app import geo
+
+        return GeoReverseOut(**geo.reverse(body.lat, body.lng))
 
     @app.post("/api/plan", response_model=PlanResponse)
     @app.get("/api/plan", response_model=PlanResponse)
@@ -196,9 +314,9 @@ def create_app() -> FastAPI:
         for k, v in upd.items():
             setattr(_runtime, k, v)
             setattr(get_settings(), k, v)
-        # Смена источника данных меняет набор заявок, но отдельного сброса кеша
-        # не нужно: источник входит в ключ, и у другого набора заявок будет
-        # другой отпечаток — промах случится сам собой.
+        # Смена региона меняет набор заявок, но отдельного сброса кеша не нужно:
+        # регион входит в ключ, а у другого набора заявок будет другой отпечаток —
+        # промах случится сам собой.
         return _settings()
 
     # Статика (без кеша, чтобы правки app.js/index.html применялись сразу)

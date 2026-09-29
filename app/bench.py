@@ -19,8 +19,8 @@ import sys
 
 from app import distance as ds
 from app.config import get_settings
-from app.data_source import control_metrics, engineers_for, requests_for
 from app.regions import REGIONS, SKILLS, norm_min
+from app.repository import control_metrics, engineers_for, requests_for
 from app.schemas import Engineer, PlanResponse, Request
 from app.solvers import get as get_solver
 

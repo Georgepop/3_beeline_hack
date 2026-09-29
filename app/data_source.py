@@ -156,9 +156,10 @@ def parse_engineers(region: str) -> list[Engineer]:
             if brigade:
                 groups.setdefault(brigade, set()).add(skill_of(bk, hd))
     if not groups:
-        from app.mock import BRIGADES
-        for i, name in enumerate(BRIGADES.get(region, ["Инженер"])):
-            groups.setdefault(name, set()).add(list(SKILLS.keys())[i % len(SKILLS)])
+        # Раньше здесь был откат на синтетические бригады app/mock.py. Модуль
+        # удалён вместе с переключателем источника: контрольный файл есть в
+        # каждом регионе, поэтому ветка не срабатывала никогда.
+        raise FileNotFoundError(f"Контрольный файл не найден в {rdir}")
 
     s = get_settings()
     engs: list[Engineer] = []

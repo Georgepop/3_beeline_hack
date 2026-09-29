@@ -21,23 +21,15 @@
         <div class="controls">
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">Источник</label>
-                    <select class="form-select" id="source" onchange="onSettingsChange()">
-                        <option value="csv">Свои данные (CSV)</option>
-                        <option value="remote">API коллеги (remote)</option>
-                        <option value="mock">Демо-данные</option>
-                    </select>
-                </div>
-                <div class="form-group">
                     <label class="form-label">Регион</label>
                     <select class="form-select" id="region" onchange="onRegionChange()"></select>
                 </div>
-            </div>
-            <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Алгоритм</label>
                     <select class="form-select" id="mode" onchange="onSettingsChange()"></select>
                 </div>
+            </div>
+            <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Дистанция</label>
                     <select class="form-select" id="dist" onchange="onSettingsChange()">

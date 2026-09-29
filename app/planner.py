@@ -1,16 +1,16 @@
 """Диспетчер: данные + солвер по активной конфигурации + сравнение.
 
-data_source: mock | csv | remote | db  →  откуда берём заявки/инженеров/офис.
+Данные берутся из app/repository.py — единственного доступа к хранилищу (БД).
 mode: baseline_fifo | improved | benchmark_ortools  →  какой решатель запускаем
-      (реестр app/solvers; сейчас реализован improved; остальные — задел).
-В сравнении оставляем контрольное распределение (справочно).
+      (реестр app/solvers). В сравнении оставляем контрольное распределение
+      (справочно) и базовый FIFO.
 """
 
 import time
 
-from app.config import get_settings
-from app import mock
+from app import repository
 from app import session
+from app.config import get_settings
 from app.regions import REGIONS, SKILLS, norm_min
 from app.schemas import (
     Comparison,
@@ -26,15 +26,12 @@ from app.solvers import get as get_solver
 
 
 def dataset(region: str, active: bool = True) -> tuple[list[Request], list[Engineer]]:
-    ds = get_settings().data_source
-    if ds == "remote":
-        from app import remote_source
-        reqs = remote_source.active_requests(region) if active else remote_source.requests_for(region)
-        return reqs, remote_source.engineers_for(region)
-    if ds in ("csv", "db"):
-        from app.data_source import engineers_for, requests_for
-        return requests_for(region), engineers_for(region)
-    return mock.build_requests(region), mock.build_engineers(region)
+    """Заявки и инженеры региона из БД.
+
+    active=False отдаёт и те заявки, что не планируются (статус «выполнена»
+    и т.п.) — они нужны карте и спискам, но не плану.
+    """
+    return repository.requests_for(region, active=active), repository.engineers_for(region)
 
 
 def solve(region: str, mode: str, dist: str) -> PlanResponse:
@@ -54,17 +51,11 @@ def solve(region: str, mode: str, dist: str) -> PlanResponse:
     plan = get_solver(mode)(region, dist, reqs, engs)
 
     control = None
-    ds = get_settings().data_source
-    if ds == "remote":
-        from app import remote_source
-        control = remote_source.control_metrics(region)
-        plan.date = remote_source.plan_date(region) or plan.date
-    elif ds in ("csv", "db"):
-        try:
-            from app.data_source import control_metrics
-            control = control_metrics(region)
-        except Exception:
-            control = None
+    try:
+        control = repository.control_metrics(region)
+    except Exception:
+        control = None
+    plan.date = repository.plan_date(region) or plan.date
 
     plan.comparison = Comparison(control=control)
     plan.comparison = _with_baseline(plan, reqs, engs, dist, mode)
@@ -196,9 +187,7 @@ def _event_label(event: ScenarioEvent) -> str:
 def _urgent_request(region: str) -> Request:
     import random
 
-    from app.data_source import office_for
-
-    office = office_for(region)
+    office = repository.office_for(region)
     rng = random.Random(region + ":urgent")
     return Request(
         id=f"URG-{region[:3].upper()}",

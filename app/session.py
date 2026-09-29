@@ -77,11 +77,13 @@ def fingerprint(requests, engineers) -> str:
     return h.hexdigest()[:16]
 
 
-def key(region: str, mode: str, dist: str, fp: str = "", source: str = "") -> str:
-    """Ключ плана. fp пустой для вызовов без данных (тогда отпечаток пустой)."""
-    from app.config import get_settings
+def key(region: str, mode: str, dist: str, fp: str = "") -> str:
+    """Ключ плана: регион, режим, метрика и отпечаток данных.
 
-    return "|".join((region, mode, dist, source or get_settings().data_source, fp))
+    Источник данных в ключ больше не входит — он стал один (БД), и смена набора
+    заявок уже отражается отпечатком.
+    """
+    return "|".join((region, mode, dist, fp or ""))
 
 
 def _load() -> None:

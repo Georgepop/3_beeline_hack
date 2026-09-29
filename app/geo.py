@@ -269,3 +269,100 @@ def geocode(address: str, district: str = "") -> list[float] | None:
     _cache[stored_key] = result
     _save_cache()
     return result
+
+
+# --- Обратное геокодирование: координаты клика по карте -> адрес ---
+
+_R_CACHE_PATH = Path("data/reverse_cache.json")
+_r_cache: dict[str, dict | None] = {}
+
+
+def _load_r_cache() -> None:
+    global _r_cache
+    if _r_cache:
+        return
+    try:
+        if _R_CACHE_PATH.exists():
+            _r_cache = json.loads(_R_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        _r_cache = {}
+
+
+def _save_r_cache() -> None:
+    try:
+        _R_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _R_CACHE_PATH.write_text(
+            json.dumps(_r_cache, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _query_nominatim_rev(lat: float, lng: float) -> dict | None:
+    """Ближайший объект по координате. Nominatim /reverse отдаёт house/road/с suburb."""
+    s = get_settings()
+    try:
+        r = requests.get(
+            s.nominatim_url + "/reverse",
+            params={"lat": lat, "lon": lng, "format": "json", "zoom": 18},
+            timeout=10,
+            headers={"User-Agent": "beeline-field-service/1.0 (hackathon)"},
+        )
+        if r.ok:
+            data = r.json()
+            if data and data.get("address"):
+                return data["address"]
+    except Exception:
+        pass
+    finally:
+        time.sleep(1.1)  # тот же rate-limit, что и в прямом поиске
+    return None
+
+
+def _addr_from_parts(a: dict) -> tuple[str, str]:
+    """Собирает «Москва, ул. …, д. …» и район из ответа Nominatim."""
+    house = a.get("house_number") or ""
+    road = (
+        a.get("road") or a.get("pedestrian") or a.get("footway")
+        or a.get("residential") or a.get("path") or ""
+    )
+    district = (
+        a.get("suburb") or a.get("city_district") or a.get("neighbourhood") or ""
+    )
+    if road:
+        addr = f"Москва, {road}"
+        if house:
+            addr += f", д. {house}"
+    elif house:
+        addr = f"Москва, д. {house}"
+    else:
+        addr = ""
+    return addr, district
+
+
+def reverse(lat: float, lng: float) -> dict:
+    """Координаты -> ближайший адрес.
+
+    Возвращает {ok, address, district, lat, lng}. ok=False означает «рядом ничего
+    не нашли» (пользователь введёт адрес руками), а не сбой: координаты в
+    ответе всё равно возвращаем, чтобы карта не прыгала.
+    """
+    _load_r_cache()
+    # Ключ округляем до ~11 м: этого хватает, чтобы не плодить кэш щелчками мыши,
+    # и в пределах этого шага адрес меняется крайне редко.
+    key = f"{round(lat, 4):.4f},{round(lng, 4):.4f}"
+    if key in _r_cache:
+        cached = _r_cache[key] or {}
+        return {
+            "ok": bool(cached.get("address")),
+            "address": cached.get("address", ""),
+            "district": cached.get("district", ""),
+            "lat": lat,
+            "lng": lng,
+        }
+
+    raw = _query_nominatim_rev(lat, lng)
+    addr, district = _addr_from_parts(raw or {})
+    _r_cache[key] = {"address": addr, "district": district}
+    _save_r_cache()
+    return {"ok": bool(addr), "address": addr, "district": district, "lat": lat, "lng": lng}

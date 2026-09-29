@@ -7,11 +7,18 @@ venv/
 
 # Runtime data (generated/cached, not source)
 data/app.db
+data/app.db-wal
+data/app.db-shm
 data/geocode_cache.json
+data/reverse_cache.json
 data/osrm_cache.json
 data/plan_cache.json
-data/parsed/
 data/*.tmp
+
+# data/parsed/ НЕ игнорируется: это распарсенные регионы с координатами, 124 КБ.
+# Коммитятся ради быстрого старта — иначе первый запуск на чистом клоне уходит
+# в геокодирование 205 адресов (~4 мин) и зависит от сети. Пересобрать: 
+# python -m app.data_source build && python -m app.db import --force
 
 # OS / editor
 Thumbs.db
