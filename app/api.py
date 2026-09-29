@@ -7,7 +7,6 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from app import explain as explain_mod
 from app import mock
 from app import planner
-from app import session
 from app.config import get_settings
 from app.regions import REGIONS
 from app.schemas import (
@@ -31,7 +30,7 @@ from app.schemas import (
 SOLVER_LABELS = {
     "baseline_fifo": "Базовый (FIFO)",
     "improved": "Улучшенный",
-    "benchmark_ortools": "OR-Tools (бенчмарк)",
+    "benchmark_ortools": "OR-Tools",
 }
 
 # Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
@@ -181,7 +180,7 @@ def create_app() -> FastAPI:
                 detail="Режим benchmark_ortools требует пакет ortools: "
                        "pip install -r requirements-benchmark.txt",
             )
-        plan = session.get(session.key(region, mode, dist)) or planner.solve(region, mode, dist)
+        plan = planner.solve(region, mode, dist)
         result = explain_mod.explain(region, request_id, plan)
         if result is None:
             raise HTTPException(status_code=404, detail=f"Заявка {request_id} не найдена в регионе {region}")
@@ -197,10 +196,9 @@ def create_app() -> FastAPI:
         for k, v in upd.items():
             setattr(_runtime, k, v)
             setattr(get_settings(), k, v)
-        # Смена источника данных меняет набор заявок — сохранённые планы устарели.
-        # Без bump кэш плана отдавал бы расчёт по точкам прошлого источника.
-        if "data_source" in upd:
-            session.bump()
+        # Смена источника данных меняет набор заявок, но отдельного сброса кеша
+        # не нужно: источник входит в ключ, и у другого набора заявок будет
+        # другой отпечаток — промах случится сам собой.
         return _settings()
 
     # Статика (без кеша, чтобы правки app.js/index.html применялись сразу)

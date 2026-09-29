@@ -52,7 +52,8 @@ const state = {
     legendList: [],       // статусы для легенды
     lastScenario: null,
     // Расчёт плана: пока /api/plan в полёте, показываем индикатор и блокируем
-    // переключатели, иначе быстрые клики накапливают запросы по 30 с каждый.
+    // переключатели, иначе быстрые клики накапливают запросы по несколько секунд
+    // каждый (дольше всего считается OR-Tools).
     planLoading: false,
     planAbort: null,     // AbortController предыдущего запроса
     planStartedAt: 0,
@@ -77,10 +78,10 @@ async function api(path, opts = {}) {
 
 // ===== Индикатор расчёта =====
 // Пока считается, страница не должна выглядеть зависшей: показываем, что идёт
-// работа и сколько она уже длится. Для OR-Tools это честно — там действительно
-// 30 с поиска, и ускорить можно только честной надписью.
+// работа и сколько она уже длится. Для OR-Tools это честно — там реально идёт
+// поиск, у него есть потолок времени, и ускорить можно только честной надписью.
 const PLAN_LOADER_MESSAGES = {
-    benchmark_ortools: 'OR-Tools ищет решение — до 30 с',
+    benchmark_ortools: 'OR-Tools ищет решение — до 5 с',
 };
 
 function planLoadingText() {
@@ -224,7 +225,7 @@ async function fillSolvers() {
     }
     if (!ortools) {
         // бэкенд не знает про режим или он выключен — показываем один невыбираемый пункт
-        opts.push(`<option value="benchmark_ortools" disabled title="Требуется пакет ortools (см. requirements-benchmark.txt) — не установлен">OR-Tools (бенчмарк) — не установлен</option>`);
+        opts.push(`<option value="benchmark_ortools" disabled title="Требуется пакет ortools (см. requirements-benchmark.txt) — не установлен">OR-Tools — не установлен</option>`);
     }
     $('mode').innerHTML = opts.join('');
     const chosen = String(state.mode || 'improved');
@@ -1024,7 +1025,7 @@ function renderMetrics() {
         return;
     }
     const c = p.comparison || {};
-    const modeLabel = { baseline_fifo: 'Базовый (FIFO)', improved: 'Улучшенный', benchmark_ortools: 'OR-Tools (бенчмарк)' }[state.mode] || state.mode;
+    const modeLabel = { baseline_fifo: 'Базовый (FIFO)', improved: 'Улучшенный', benchmark_ortools: 'OR-Tools' }[state.mode] || state.mode;
     let html = '<div class="metrics-compare">';
     html += metricsTable('Наш план (' + modeLabel + ')', p.metrics, true);
     html += controlTable('Контрольное распределение* (бригады)', c.control);

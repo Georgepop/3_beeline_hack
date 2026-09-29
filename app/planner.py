@@ -6,6 +6,8 @@ mode: baseline_fifo | improved | benchmark_ortools  →  какой решате
 В сравнении оставляем контрольное распределение (справочно).
 """
 
+import time
+
 from app.config import get_settings
 from app import mock
 from app import session
@@ -37,14 +39,18 @@ def dataset(region: str, active: bool = True) -> tuple[list[Request], list[Engin
 
 def solve(region: str, mode: str, dist: str) -> PlanResponse:
     # Кэш: переключение между режимами не должно каждый раз считать заново
-    # (для OR-Tools это 30 с ради того же ответа). Ревизия сбрасывает кэш,
-    # когда меняется набор заявок, а источник данных входит в сам ключ.
-    cache_key = session.key(region, mode, dist)
+    # (для OR-Tools это секунды ради того же ответа). Ключ — содержимое данных,
+    # поэтому любое изменение набора заявок инвалидирует кеш само, без ручных
+    # вызовов bump(); смотреть _REV в планировщике не нужно.
+    # Данные читаются ДО проверки кеша: без них не из чего взять отпечаток.
+    # Это чтение распарсенного региона (десятки КБ), на порядки дешевле расчёта.
+    reqs, engs = dataset(region)
+    cache_key = session.key(region, mode, dist, session.fingerprint(reqs, engs))
     cached = session.get(cache_key)
     if cached is not None:
         return cached
 
-    reqs, engs = dataset(region)
+    started = time.perf_counter()
     plan = get_solver(mode)(region, dist, reqs, engs)
 
     control = None
@@ -65,7 +71,9 @@ def solve(region: str, mode: str, dist: str) -> PlanResponse:
     from app import summary as summary_mod
 
     plan.summary = summary_mod.build_summary(plan, reqs, engs, dist)
-    session.store(cache_key, plan)
+    # Засекаем только солвер: контрольные метрики и сводка считаются и у
+    # дешёвых планов, и порог записи на диск должен смотреть на их цену.
+    session.store(cache_key, plan, elapsed=time.perf_counter() - started)
     return plan
 
 
@@ -116,7 +124,10 @@ def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
     reqs, engs = dataset(region)
     mode, dist = _active_mode()
     before = get_solver(mode)(region, dist, reqs, engs)
-    session.bump()  # набор заявок изменился — сохранённые планы больше не актуальны
+    # Отдельного bump() больше нет: ниже набор заявок меняется, поэтому у
+    # нового плана будет другой отпечаток и он не совпадёт ни с одним
+    # сохранённым — старый план останется в кеше нетронутым и сам вытеснится
+    # по лимиту записей, а не сбросом всего кеша.
 
     if event.type == "urgent":
         reqs = reqs + [_urgent_request(region)]
@@ -139,7 +150,9 @@ def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
     from app import summary as summary_mod
 
     after.summary = summary_mod.build_summary(after, reqs, engs, dist)
-    session.store(session.key(region, mode, dist), after)
+    # Ключ — по новому набору (с учётом события), поэтому /api/plan/geometry
+    # после перепланирования отдаст геометрию именно для этого плана.
+    session.store(session.key(region, mode, dist, session.fingerprint(reqs, engs)), after)
     return ScenarioResult(event=_event_label(event), plan=after, diff=_compare_plans(before, after))
 
 

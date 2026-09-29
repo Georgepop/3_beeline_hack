@@ -152,8 +152,11 @@ def solve_ortools(region: str, dist: str, requests: list[Request], engineers: li
     params.local_search_metaheuristic = getattr(
         routing_enums_pb2.LocalSearchMetaheuristic, s.ortools_local_search.upper())
     params.time_limit.FromSeconds(s.ortools_time_limit)
-    # В ortools 9.15 у RoutingSearchParameters нет поля seed. При 30 с результат
-    # всё же устойчив: 3 прогона на каждом регионе дали разброс 0 заявок.
+    # В ortools 9.15 у RoutingSearchParameters нет поля seed, поэтому результат
+    # зависит от того, сколько итераций машина успеет сделать за отведённое
+    # wall-clock время. На одном лимите в одной сессии повторы совпадали, но при
+    # разной загрузке наблюдался разброс в 1 заявку — потому лимит и урезан до
+    # 5 с (app/config.py): выигрыш от 30 с неустойчив и не стоит ожидания.
     params.log_search = False
     solution = routing.SolveWithParameters(params)
 
