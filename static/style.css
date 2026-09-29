@@ -308,6 +308,16 @@ select:disabled { opacity: 0.55; cursor: default; }
 .item-card.muted { opacity: 0.72; }
 .item-card.muted:hover { opacity: 1; }
 
+/* Кнопка «Почему так» в попапе заявки на карте */
+.popup-actions { margin-top: 9px; padding-top: 8px; border-top: 1px solid #e6ebef; }
+.popup-why {
+    background: #eef2f5; color: #2c3e50; border: none; border-radius: 7px;
+    padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    font-family: inherit; transition: background 0.15s;
+}
+.popup-why:hover { background: #dde4ea; }
+.maplibregl-popup-content { font-family: inherit; font-size: 13px; line-height: 1.45; }
+
 .modal-backdrop {
     position: fixed; inset: 0; background: rgba(20, 32, 44, 0.45);
     display: flex; align-items: center; justify-content: center; z-index: 60; padding: 24px;

@@ -625,13 +625,25 @@ function _routeFeature(eng, idx, highlighted) {
     };
 }
 
+// Кнопка «Почему так» в попапе заявки на карте. Клик по попапу сам по себе
+// ничего не делает — показываем разбор плана по этой заявке.
+function _whyBtn(rid) {
+    return `<div class="popup-actions"><button class="popup-why" onclick="whyFromPopup('${esc(rid)}')">Почему так</button></div>`;
+}
+
+function whyFromPopup(id) {
+    if (state.popup) state.popup.remove();
+    explainRequest(id);
+}
+
 function _stopPopup(st, eng) {
     const req = planRid2Req(st.request_id);
     return `<b>Заявка ${esc(st.request_id)}</b><br>${esc(st.address)}<br>` +
         `Окно: <b>${esc(st.window[0])}–${esc(st.window[1])}</b><br>` +
         `Прибытие: ${esc(st.arrival)} · Работы: ${esc(st.start_work)}–${esc(st.finish)}<br>` +
         `Инженер: <b>${esc(eng.name)}</b> (${esc(eng.transport_label)})<br>` +
-        (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : '');
+        (req ? `Тип: ${esc(req.skill_label)} · ${esc(req.bk_type)}` : '') +
+        _whyBtn(st.request_id);
 }
 
 function _officePopup(plan, start) {
@@ -752,7 +764,8 @@ function renderMap(fit) {
             displayed.add(u.request_id);
             _addPoint('un-' + u.request_id, req.lng, req.lat, unassignedIconHtml(),
                 `<b>Заявка ${esc(u.request_id)}</b><br>${esc(u.address)}<br>❌ <b>Не назначена</b><br>Причина: ${esc(u.reason)}`
-                + (u.reason_detail ? `<br><span style="opacity:.8">${esc(u.reason_detail)}</span>` : ''));
+                + (u.reason_detail ? `<br><span style="opacity:.8">${esc(u.reason_detail)}</span>` : '')
+                + _whyBtn(u.request_id));
             state.reqPoints[u.request_id] = [req.lng, req.lat];
         });
     }
@@ -768,7 +781,9 @@ function renderMap(fit) {
             _addPoint('rs-' + req.id, req.lng, req.lat, statusIconHtml(color),
                 `<b>Заявка ${esc(req.id)}</b><br>${esc(req.address)}<br>Статус: <b>${esc(req.status || '—')}</b>` +
                 (req.control_brigade ? `<br>Контроль: ${esc(req.control_brigade)}` : '') +
-                (req.gigabit ? '<br>Гигабитное подключение' : ''));
+                (req.gigabit ? '<br>Гигабитное подключение' : '') +
+                (req.is_active === false ? '<br>⊘ <b>Не планируется</b>' : '') +
+                _whyBtn(req.id));
             state.reqPoints[req.id] = [req.lng, req.lat];
         });
     }
@@ -1207,12 +1222,25 @@ function openRequestEditor(id = null, coords = null) {
     $('reqDuration').value = req ? (req.duration_min || '') : '';
     $('reqDeleteBtn').hidden = !req;
     $('reqActiveWrap').hidden = !req;   // у новой заявки отменять нечего
+    // Почему так — вопрос к плану, а к новой заявки в плане ещё нет.
+    $('reqExplainBtn').hidden = !req;
+    $('reqExplainBtn').title = 'Объяснение по сохранённому в базе плану. ' +
+        'Несохранённые правки формы в объяснение не попадут.';
     $('reqSaveBtn').textContent = req ? 'Сохранить' : 'Создать';
 
     syncCoordsHint(req, coords);
     syncRequestType();
     $('reqModal').hidden = false;
     setTimeout(() => $('reqAddress').focus(), 0);
+}
+
+// Модалка лежит поверх карты, поэтому закрываем её и уходим в раздел
+// «Маршруты», где объяснение и живёт (explainRequest переключает раздел сам).
+function explainFromEditor() {
+    const id = state.editReqId;
+    if (!id) return;
+    closeRequestEditor();
+    explainRequest(id);
 }
 
 function syncCoordsHint(req, coords) {

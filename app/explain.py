@@ -51,7 +51,14 @@ def explain(region: str, request_id: str, plan) -> RequestExplanation | None:
     by_id = {r.id: r for r in reqs}
     req = by_id.get(request_id)
     if req is None:
-        return None
+        # Отменённая заявка не входит в план, но остаётся в базе и на карте.
+        # Отвечать «не найдена» было бы неправдой: она есть, просто не
+        # планируется, и это тоже объяснение, которое диспетчеру нужно видеть.
+        all_reqs, _ = planner.dataset(region, active=False)
+        cancelled = next((r for r in all_reqs if r.id == request_id), None)
+        if cancelled is None:
+            return None
+        return _explain_cancelled(cancelled)
     out = RequestExplanation(request_id=req.id, address=req.address)
     routes = _current_routes(plan, by_id, engs)
     by_eng = {e.id: e for e in engs}
@@ -144,6 +151,30 @@ def _why_not_served(req: Request, eng: Engineer) -> str:
     if req.skill not in eng.skills:
         return f"нет навыка «{req.skill_label}»"
     return f"транспорт {eng.transport_label or eng.transport} не подходит"
+
+
+def _explain_cancelled(req: Request) -> RequestExplanation:
+    """Почему заявки нет в плане, хотя она есть в базе и на карте."""
+    out = RequestExplanation(
+        request_id=req.id,
+        address=req.address,
+        assigned=False,
+        reason_code="cancelled",
+        reason="Заявка отменена",
+        detail=(
+            f"Окно заявки {req.window_start}–{req.window_end}, норматив "
+            f"{req.duration_min} мин, тип «{req.bk_type}». Снят флаг "
+            f"«Планировать в следующем рейсе», поэтому заявка не участвует "
+            f"в расчёте и не занимает место в маршрутах."
+        ),
+        headline="Заявка отменена — в план она не входит",
+        hint="Снимите галочку «Планировать в следующем рейсе» в редакторе заявки.",
+        facts=[
+            "Заявка остаётся в базе и показывается на карте отдельной группой.",
+            "На неё не выделяются ни время, ни пробег — план её не видит.",
+        ],
+    )
+    return out
 
 
 def _explain_unassigned(out: RequestExplanation, req: Request, engs: list[Engineer],
