@@ -36,6 +36,14 @@ def dataset(region: str, active: bool = True) -> tuple[list[Request], list[Engin
 
 
 def solve(region: str, mode: str, dist: str) -> PlanResponse:
+    # Кэш: переключение между режимами не должно каждый раз считать заново
+    # (для OR-Tools это 30 с ради того же ответа). Ревизия сбрасывает кэш,
+    # когда меняется набор заявок, а источник данных входит в сам ключ.
+    cache_key = session.key(region, mode, dist)
+    cached = session.get(cache_key)
+    if cached is not None:
+        return cached
+
     reqs, engs = dataset(region)
     plan = get_solver(mode)(region, dist, reqs, engs)
 
@@ -57,7 +65,7 @@ def solve(region: str, mode: str, dist: str) -> PlanResponse:
     from app import summary as summary_mod
 
     plan.summary = summary_mod.build_summary(plan, reqs, engs, dist)
-    session.store((region, mode, dist), plan)
+    session.store(cache_key, plan)
     return plan
 
 
@@ -131,7 +139,7 @@ def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
     from app import summary as summary_mod
 
     after.summary = summary_mod.build_summary(after, reqs, engs, dist)
-    session.store((region, mode, dist), after)
+    session.store(session.key(region, mode, dist), after)
     return ScenarioResult(event=_event_label(event), plan=after, diff=_compare_plans(before, after))
 
 

@@ -154,6 +154,20 @@ class RequestExplanation(BaseModel):
     hint: str = ""                            # что помогло бы выполнить заявку
 
 
+class EngineerRoute(BaseModel):
+    """Полилиния маршрута одного инженера для отрисовки (не для расчёта)."""
+    engineer_id: str
+    route: Optional[list[list[float]]] = None  # [[lat, lng], ...]; None = рисовать прямой
+
+
+class GeometryResponse(BaseModel):
+    """Ответ GET /api/plan/geometry: геометрия приезжает отдельным запросом,
+    уже после того как план посчитан, поэтому сеть не держит расчёт."""
+    region: str
+    mode: str
+    routes: list[EngineerRoute] = []
+
+
 class RegionMeta(BaseModel):
     id: str
     name: str

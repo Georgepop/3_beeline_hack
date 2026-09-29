@@ -51,6 +51,15 @@ const state = {
     hiddenStatuses: new Set(), // статусы, скрытые в легенде
     legendList: [],       // статусы для легенды
     lastScenario: null,
+    // Расчёт плана: пока /api/plan в полёте, показываем индикатор и блокируем
+    // переключатели, иначе быстрые клики накапливают запросы по 30 с каждый.
+    planLoading: false,
+    planAbort: null,     // AbortController предыдущего запроса
+    planStartedAt: 0,
+    planTimer: null,
+    planReqId: 0,        // номер текущего запроса — защита от устаревших ответов
+    // Геометрия по дорогам приезжает отдельным запросом уже после плана.
+    geometryKey: null,   // 'region|mode|dist' — для отбрасывания устаревшего ответа
 };
 
 const $ = (id) => document.getElementById(id);
@@ -64,6 +73,49 @@ async function api(path, opts = {}) {
         throw new Error(msg);
     }
     return r.json();
+}
+
+// ===== Индикатор расчёта =====
+// Пока считается, страница не должна выглядеть зависшей: показываем, что идёт
+// работа и сколько она уже длится. Для OR-Tools это честно — там действительно
+// 30 с поиска, и ускорить можно только честной надписью.
+const PLAN_LOADER_MESSAGES = {
+    benchmark_ortools: 'OR-Tools ищет решение — до 30 с',
+};
+
+function planLoadingText() {
+    const base = PLAN_LOADER_MESSAGES[state.mode] || 'Считаем план…';
+    const sec = Math.round((Date.now() - state.planStartedAt) / 1000);
+    return sec > 0 ? `${base} (${sec} с)` : base;
+}
+
+function startPlanLoading() {
+    state.planLoading = true;
+    state.planStartedAt = Date.now();
+    ['region', 'mode', 'dist', 'source'].forEach(id => { if ($(id)) $(id).disabled = true; });
+    if ($('btnPlan')) $('btnPlan').disabled = true;
+    if ($('planLoader')) $('planLoader').hidden = false;
+    clearInterval(state.planTimer);
+    state.planTimer = setInterval(() => {
+        const el = $('planLoaderText');
+        if (el) el.textContent = planLoadingText();
+    }, 200);
+}
+
+function stopPlanLoading() {
+    state.planLoading = false;
+    clearInterval(state.planTimer);
+    state.planTimer = null;
+    ['region', 'mode', 'dist', 'source'].forEach(id => { if ($(id)) $(id).disabled = false; });
+    if ($('btnPlan')) $('btnPlan').disabled = false;
+    if ($('planLoader')) $('planLoader').hidden = true;
+}
+
+// Счётчик запросов: пока считался план для прежнего региона, счётчик уже другой,
+// и такой ответ надо выбросить, а не подставить в state.plan.
+function nextPlanReqId() {
+    state.planReqId = (state.planReqId || 0) + 1;
+    return state.planReqId;
 }
 
 // ===== Вспомогательные =====
@@ -210,12 +262,19 @@ async function applySettings() {
 }
 
 async function loadPlan() {
+    if (state.planAbort) state.planAbort.abort();   // предыдущий расчёт больше не нужен
+    const ctrl = new AbortController();
+    state.planAbort = ctrl;
+    const reqId = nextPlanReqId();
+    const sel = { region: state.region, mode: state.mode, dist: state.dist };
+    startPlanLoading();
     try {
         const [plan, requests, engineers] = await Promise.all([
-            api(`/api/plan?region=${state.region}&mode=${state.mode}&dist=${state.dist}`),
-            api(`/api/requests?region=${state.region}`),
-            api(`/api/engineers?region=${state.region}`),
+            api(`/api/plan?region=${sel.region}&mode=${sel.mode}&dist=${sel.dist}`, { signal: ctrl.signal }),
+            api(`/api/requests?region=${sel.region}`, { signal: ctrl.signal }),
+            api(`/api/engineers?region=${sel.region}`, { signal: ctrl.signal }),
         ]);
+        if (reqId !== state.planReqId) return;   // пока считалось, успели переключить
         state.plan = plan;
         state.requests = requests;
         state.engineers = engineers;
@@ -225,8 +284,43 @@ async function loadPlan() {
         state.legendList = [...new Set(requests.map(r => r.status).filter(Boolean))];
         closeExplain();  // план пересчитан — прежнее объяснение больше не про этот план
         renderAll();
+        // Полилинии по дорогам — отдельный запрос, уже после отрисовки плана:
+        // карта сначала рисует прямые линии, потом заменяет их дорожными.
+        loadGeometry(sel, reqId);
     } catch (e) {
-        toast('Ошибка плана: ' + e.message, 'error');
+        if (e.name !== 'AbortError') toast('Ошибка плана: ' + e.message, 'error');
+    } finally {
+        // Гасим индикатор в любом исходе, но только если это ещё актуальный
+        // расчёт: устаревший ответ не должен погасить спиннер свежего.
+        if (reqId === state.planReqId) stopPlanLoading();
+    }
+}
+
+// Догружает геометрию маршрутов по дорогам. Не блокирует показ плана: сетевой
+// запрос к OSRM идёт после того, как маршруты уже нарисованы прямыми линиями.
+// Ответ для устаревшей комбинации (region/mode) выбрасывается.
+async function loadGeometry(sel, reqId) {
+    if (!state.plan) return;
+    try {
+        const g = await api(`/api/plan/geometry?region=${sel.region}&mode=${sel.mode}&dist=${sel.dist}`);
+        if (reqId !== state.planReqId || !state.plan) return;
+        const byId = new Map(g.routes.map(r => [r.engineer_id, r.route]));
+        let filled = 0;
+        state.plan.engineers.forEach(e => {
+            if (e.stops.length && byId.has(e.id)) {
+                const r = byId.get(e.id);
+                e.route = r;
+                if (r) filled++;
+            }
+        });
+        renderMap(false);   // перерисовка без перецентровки — вьюпорт не прыгает
+        const hint = $('mapHint');
+        if (hint && filled === 0 && state.plan.engineers.some(e => e.stops.length)) {
+            hint.textContent = 'Дорожные маршруты недоступны — показаны прямые линии';
+        }
+    } catch (e) {
+        // Не ошибка плана: без геометрии карта рисует прямые линии.
+        console.warn('Геометрия маршрутов не загрузилась:', e.message);
     }
 }
 
@@ -965,6 +1059,7 @@ async function runScenario(type) {
     const body = { type };
     if (type === 'cancel') body.request_id = $('cancelReq').value;
     if (type === 'unavailable') body.engineer_id = $('unavailEng').value;
+    const reqId = nextPlanReqId();   // прошлый ответ по геометрии теперь неактуален
     try {
         const res = await api(`/api/scenario?region=${state.region}`, {
             method: 'POST',
@@ -975,6 +1070,8 @@ async function runScenario(type) {
         state.lastScenario = res;
         renderAll();
         renderScenarios();
+        // Маршруты перестроились — дорожные линии тоже надо обновить.
+        loadGeometry({ region: state.region, mode: state.mode, dist: state.dist }, reqId);
         toast('Сценарий: ' + res.event, 'success');
 
         let html = '<div class="panel-header"><div class="panel-title">Результат перепланирования</div></div>';

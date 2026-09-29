@@ -13,6 +13,8 @@ from app.regions import REGIONS
 from app.schemas import (
     DistMode,
     Engineer,
+    EngineerRoute,
+    GeometryResponse,
     PlanResponse,
     RegionId,
     RegionMeta,
@@ -129,6 +131,34 @@ def create_app() -> FastAPI:
             )
         return planner.solve(region, mode, dist)
 
+    @app.get("/api/plan/geometry", response_model=GeometryResponse)
+    def plan_geometry(region: RegionId = Query(default=_settings().region),
+                      mode: SolverMode = Query(default=_settings().solver_mode),
+                      dist: DistMode = Query(default=_settings().dist_mode)):
+        """Полилинии маршрутов по дорогам — для карты, не для расчёта.
+
+        Расписание считается на haversine и сюда не входит, поэтому запрос идёт
+        отдельным вызовом уже после /api/plan: сетевая задержка OSRM не стоит в
+        критическом пути. Недоступный OSRM — не ошибка: отдаём route=None, и фронт
+        рисует прямую линию (так и было до разделения).
+        """
+        from app import osrm
+
+        plan = planner.solve(region, mode, dist)  # из кэша плана — мгновенно
+        active = [e for e in plan.engineers if e.stops]
+        paths = [[(e.start.lat, e.start.lng)] + [(s.lat, s.lng) for s in e.stops]
+                 for e in active]
+        try:
+            polylines = osrm.routes_polyline(paths)
+        except Exception:
+            polylines = [None] * len(paths)
+        return GeometryResponse(
+            region=region,
+            mode=mode,
+            routes=[EngineerRoute(engineer_id=e.id, route=r)
+                    for e, r in zip(active, polylines)],
+        )
+
     @app.post("/api/scenario", response_model=ScenarioResult)
     def scenario(ev: ScenarioEvent = Body(...),
                  region: RegionId = Query(default=_settings().region)):
@@ -151,8 +181,7 @@ def create_app() -> FastAPI:
                 detail="Режим benchmark_ortools требует пакет ortools: "
                        "pip install -r requirements-benchmark.txt",
             )
-        key = (region, mode, dist)
-        plan = session.get(key) or planner.solve(region, mode, dist)
+        plan = session.get(session.key(region, mode, dist)) or planner.solve(region, mode, dist)
         result = explain_mod.explain(region, request_id, plan)
         if result is None:
             raise HTTPException(status_code=404, detail=f"Заявка {request_id} не найдена в регионе {region}")
@@ -168,6 +197,10 @@ def create_app() -> FastAPI:
         for k, v in upd.items():
             setattr(_runtime, k, v)
             setattr(get_settings(), k, v)
+        # Смена источника данных меняет набор заявок — сохранённые планы устарели.
+        # Без bump кэш плана отдавал бы расчёт по точкам прошлого источника.
+        if "data_source" in upd:
+            session.bump()
         return _settings()
 
     # Статика (без кеша, чтобы правки app.js/index.html применялись сразу)

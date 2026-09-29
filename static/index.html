@@ -66,7 +66,7 @@
             <h1 class="page-title" id="pageTitle">Маршруты</h1>
             <div class="action-buttons">
                 <button class="btn btn-secondary" onclick="switchSection('metrics', null)"><span>📊</span> Сравнить</button>
-                <button class="btn btn-primary" onclick="loadPlan()"><span>⚡</span> Рассчитать план</button>
+                <button class="btn btn-primary" id="btnPlan" onclick="loadPlan()"><span>⚡</span> Рассчитать план</button>
             </div>
         </div>
 
@@ -86,6 +86,13 @@
                 <div class="map-container">
                     <div id="mainMap"></div>
                     <div class="map-hint" id="mapHint">Кликните на заявку в списке, чтобы показать на карте</div>
+                    <div class="plan-loader" id="planLoader" hidden>
+                        <div class="plan-loader-box">
+                            <div class="spinner"></div>
+                            <div class="plan-loader-text" id="planLoaderText">Считаем план…</div>
+                            <div class="plan-loader-sub">Переключатели временно недоступны, чтобы не запустить расчёт дважды</div>
+                        </div>
+                    </div>
                 </div>
                 <div class="map-tools" id="mapTools"></div>
                 <div class="route-steps" id="routeSteps"></div>

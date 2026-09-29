@@ -116,19 +116,20 @@ def build_plan(region: str, mode: str, dist: str, engineers: list[Engineer],
 
 
 def with_route(eng: Engineer, reqs: list[Request], dist: str) -> Engineer:
+    """Инженер с посчитанным маршрутом.
+
+    Здесь НЕТ обращения к OSRM: геометрия для отрисовки — это запрос к внешнему
+    сервису, а не часть расписания. Раньше она тянулась здесь, по одному запросу
+    на инженера, и на Юго-востоке это давало 8.9 с вместо 0.08 с (профиль: 24
+    вызова requests.get, 3.3 с из них — TLS-рукопожатие). Полилинии приезжают
+    отдельно, GET /api/plan/geometry, уже после того как план посчитан.
+    """
     sr = schedule_route(eng, reqs, dist)
     if sr is None:
         return eng
-    route = None
-    if get_settings().osrm_enabled and sr["stops"]:
-        from app import osrm
-
-        route = osrm.route_polyline(
-            [(eng.start.lat, eng.start.lng)] + [(st.lat, st.lng) for st in sr["stops"]]
-        )
     return Engineer(
         id=eng.id, name=eng.name, skills=eng.skills, skills_label=eng.skills_label,
         transport=eng.transport, transport_label=eng.transport_label,
         shift_start=eng.shift_start, shift_end=eng.shift_end,
-        start=eng.start, route=route, stops=sr["stops"], km=round(sr["km"], 1), minutes=sr["minutes"],
+        start=eng.start, route=None, stops=sr["stops"], km=round(sr["km"], 1), minutes=sr["minutes"],
     )

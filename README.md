@@ -28,6 +28,8 @@
 - Карта (Leaflet + OpenStreetMap): маршруты бригад **по дорогам** (OSRM, с запасным
   вариантом «прямая линия»), стопы, офис, неназначенные заявки; переключатель
   «все маршруты / один инженер», чекбокс «Заявки на карте» с легендой статусов.
+  План появляется мгновенно по прямым линиям, а дорожная геометрия догружается
+  следом отдельным запросом и подменяет линии, не сдвигая вьюпорт.
 - API по фиксированному контракту — солвер можно заменить, не трогая фронт.
 
 ## Стек
@@ -75,7 +77,7 @@ docker compose up --build
 | `SOLVER_MODE` | `improved` | `baseline_fifo`, `improved`, `benchmark_ortools` |
 | `DIST_MODE` | `haversine` | `haversine` (позже `osrm` — дорожные метрики) |
 | `OSRM_ENABLED` | `true` | рисовать маршруты на карте по дорогам (OSRM); `false` — прямые линии |
-| `OSRM_TIMEOUT` | `15` | таймаут запросов к OSRM (сек) |
+| `OSRM_TIMEOUT` | `4` | таймаут запросов к OSRM (сек) |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | также `postgresql+psycopg://...` |
 | `SHIFT_START` / `SHIFT_END` | `08:00` / `20:00` | смена инженеров (не применяется для remote) |
 | `ORTOOLS_TIME_LIMIT` | `30` | лимит поиска бенчмарка, сек (10 не хватает на Юго-востоке) |
@@ -93,6 +95,7 @@ docker compose up --build
 | GET  | `/api/requests` | `region` |
 | GET  | `/api/engineers` | `region` |
 | POST | `/api/plan` | `region`, `mode`, `dist` |
+| GET  | `/api/plan/geometry` | `region`, `mode`, `dist` — только полилинии по дорогам |
 | GET  | `/api/explain` | `region`, `request_id`, `mode`, `dist` |
 | POST | `/api/scenario` | `region`; body: `{"type": "urgent"\|"cancel"\|"unavailable", "request_id"?, "engineer_id"?}` |
 | GET/POST | `/api/settings` | — |
@@ -103,6 +106,15 @@ finish/window), `unassigned[]` (с `reason`, `reason_code`, `reason_detail`),
 `metrics`, `summary` (сводка) и `comparison` {baseline, improved, control}.
 `GET /api/solvers` — список подключённых алгоритмов (реестр `app/solvers`).
 Структуры — в `app/schemas.py`.
+
+Почему расчёт не ждёт OSRM: в `/api/plan` у маршрутов всегда `route: null`, и
+расписание считается целиком на haversine. Полилинии приходят отдельным запросом
+`GET /api/plan/geometry` (`{region, mode, routes: [{engineer_id, route}]}`, где
+`route` — `[[lat, lng], ...]` или `null`). Планировщик не делает сетевых вызовов
+вообще: раньше это добавляло 12 запросов по одному на инженера и ~9 с к расчёту
+региона. Отдельный endpoint отдаёт план из кэша и только догружает геометрию;
+`data/osrm_cache.json` (в `.gitignore`) переживает перезапуск сервера, при
+недоступности OSRM в `route` приходит `null`, и фронт рисует прямые линии.
 
 Причины неназначения (`reason_code`):
 
