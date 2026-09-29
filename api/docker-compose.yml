@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: fastapi_routine_app
+    ports:
+      - "7000:7000"
+    restart: unless-stopped
+    # If you want to mount your local code for live development, uncomment the line below:
+    # volumes:
+    #   - .:/app
