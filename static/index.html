@@ -57,8 +57,7 @@
         <div class="top-bar">
             <h1 class="page-title" id="pageTitle">Маршруты</h1>
             <div class="action-buttons">
-                <button class="btn btn-secondary" onclick="switchSection('metrics', null)"><span>📊</span> Сравнить</button>
-                <button class="btn btn-primary" id="btnPlan" onclick="loadPlan()"><span>⚡</span> Рассчитать план</button>
+                <button class="btn btn-secondary" id="btnRefresh" onclick="loadPlan()" title="План и так пересчитывается сам: при смене региона, режима и метрики, а также после любой правки данных. Нужна, если данные изменились вне приложения — например, после импорта CSV. Открытая карточка «Почему так» при этом закроется."><span>↻</span> Обновить</button>
             </div>
         </div>
 

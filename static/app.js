@@ -50,9 +50,9 @@ const state = {
     hiddenStatuses: new Set(), // статусы, скрытые в легенде
     legendList: [],       // статусы для легенды
     lastScenario: null,
-    // Расчёт плана: пока /api/plan в полёте, показываем индикатор и блокируем
-    // переключатели, иначе быстрые клики накапливают запросы по несколько секунд
-    // каждый (дольше всего считается OR-Tools).
+    // Расчёт плана: пока /api/plan в полёте, показываем индикатор и гасим
+    // кнопку «Обновить». Без этого повторный клик во время долгого расчёта
+    // OR-Tools (до 5 с) запускал бы второй запрос вхолостую.
     planLoading: false,
     planAbort: null,     // AbortController предыдущего запроса
     planStartedAt: 0,
@@ -99,7 +99,7 @@ function startPlanLoading() {
     state.planLoading = true;
     state.planStartedAt = Date.now();
     ['region', 'mode', 'dist'].forEach(id => { if ($(id)) $(id).disabled = true; });
-    if ($('btnPlan')) $('btnPlan').disabled = true;
+    if ($('btnRefresh')) $('btnRefresh').disabled = true;
     if ($('planLoader')) $('planLoader').hidden = false;
     clearInterval(state.planTimer);
     state.planTimer = setInterval(() => {
@@ -113,7 +113,7 @@ function stopPlanLoading() {
     clearInterval(state.planTimer);
     state.planTimer = null;
     ['region', 'mode', 'dist'].forEach(id => { if ($(id)) $(id).disabled = false; });
-    if ($('btnPlan')) $('btnPlan').disabled = false;
+    if ($('btnRefresh')) $('btnRefresh').disabled = false;
     if ($('planLoader')) $('planLoader').hidden = true;
 }
 
