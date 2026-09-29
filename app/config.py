@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # Бенчмарк OR-Tools (requirements-benchmark.txt). Цель — минуты: плата за
     # каждого реально задействованного инженера + штраф за пропуск заявки.
-    ortools_time_limit: int = 5        # лимит поиска, сек
+    ortools_time_limit: int = 30        # лимит поиска, сек (10 не хватает на Юго-востоке)
     ortools_drop_penalty: int = 100000  # штраф за невыполненную заявку (избыточно большой)
     ortools_fixed_vehicle_cost: int = 45  # плата за инженера в минутах
     ortools_slack_max: int = 1440        # максимум ожидания до начала окна, мин

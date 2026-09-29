@@ -17,6 +17,7 @@ from app.schemas import (
     ScenarioEvent,
     ScenarioResult,
 )
+from app.solvers import available as solver_available
 from app.solvers import get as get_solver
 
 
@@ -55,7 +56,8 @@ def solve(region: str, mode: str, dist: str) -> PlanResponse:
 
 def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
     reqs, engs = dataset(region)
-    before = get_solver("improved")(region, "haversine", reqs, engs)
+    mode, dist = _active_mode()
+    before = get_solver(mode)(region, dist, reqs, engs)
 
     if event.type == "urgent":
         reqs = reqs + [_urgent_request(region)]
@@ -74,8 +76,17 @@ def replay(region: str, event: ScenarioEvent) -> ScenarioResult:
     else:
         raise ValueError("Неизвестный тип события")
 
-    after = get_solver("improved")(region, "haversine", reqs, engs)
+    after = get_solver(mode)(region, dist, reqs, engs)
     return ScenarioResult(event=_event_label(event), plan=after, diff=_compare_plans(before, after))
+
+
+def _active_mode() -> tuple[str, str]:
+    """Сценарий пересчитывается в том же режиме, что и план (иначе демо покажет не тот солвер)."""
+    s = get_settings()
+    mode = s.solver_mode
+    if not solver_available(mode):
+        mode = "improved"
+    return mode, s.dist_mode
 
 
 def _compare_plans(before: PlanResponse, after: PlanResponse) -> list[dict]:
