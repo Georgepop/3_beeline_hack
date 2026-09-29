@@ -1,7 +1,7 @@
 """Диспетчер: данные + солвер по активной конфигурации + сравнение.
 
 Данные берутся из app/repository.py — единственного доступа к хранилищу (БД).
-mode: baseline_fifo | improved | benchmark_ortools  →  какой решатель запускаем
+mode: baseline_fifo | improved | benchmark_ortools | ortools_office  →  какой решатель запускаем
       (реестр app/solvers). В сравнении оставляем контрольное распределение
       (справочно) и базовый FIFO.
 """

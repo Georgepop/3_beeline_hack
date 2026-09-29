@@ -40,6 +40,7 @@ SOLVER_LABELS = {
     "baseline_fifo": "Базовый (FIFO)",
     "improved": "Улучшенный",
     "benchmark_ortools": "OR-Tools",
+    "ortools_office": "Контур (OR-Tools)",
 }
 
 # Хранимые настройки (пока in-memory; Phase 5 — таблица settings в БД).
@@ -243,7 +244,7 @@ def create_app() -> FastAPI:
         if not solver_available(mode):
             raise HTTPException(
                 status_code=503,
-                detail="Режим benchmark_ortools требует пакет ortools: "
+                detail=f"Режим {mode} требует пакет ortools: "
                        "pip install -r requirements-benchmark.txt",
             )
         return planner.solve(region, mode, dist)
@@ -295,7 +296,7 @@ def create_app() -> FastAPI:
         if not solver_available(mode):
             raise HTTPException(
                 status_code=503,
-                detail="Режим benchmark_ortools требует пакет ortools: "
+                detail=f"Режим {mode} требует пакет ortools: "
                        "pip install -r requirements-benchmark.txt",
             )
         plan = planner.solve(region, mode, dist)

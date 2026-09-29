@@ -33,7 +33,15 @@ def _apply_settings(args) -> dict:
     """Записывает орагловые переопределения в кэшированные настройки."""
     s = get_settings()
     applied: dict[str, object] = {}
-    s.osrm_enabled = False  # иначе каждый замер дёргает OSRM за полилиниями
+    # osrm_enabled НЕ выключаем. Раньше здесь стояло s.osrm_enabled = False «чтобы
+    # замер не дёргал OSRM за полилиниями», но солверы полилинии давно не берут
+    # (роут из with_route вынесен в GET /api/plan/geometry), а «Контур» берёт у
+    # OSRM матрицу расстояний и отключение флага молча уводило его на haversine —
+    # в таблице замера это выглядело бы как результат, посчитанный другой моделью.
+    # Чем считали — печатается в строке режима.
+    if args.office_matrix is not None:
+        s.ortools_office_matrix = args.office_matrix
+        applied["ortools_office_matrix"] = args.office_matrix
     if args.time_limit is not None:
         s.ortools_time_limit = args.time_limit
         applied["ortools_time_limit"] = args.time_limit
@@ -145,6 +153,7 @@ def _median_runs(region: str, mode: str, reqs: list[Request], engs: list[Enginee
         "km": pick("total_km"),
         "minutes": pick("total_minutes"),
         "unassigned": pick("unassigned_count"),
+        "matrix": plans[0].matrix,
         "spread": (min(p.metrics.assigned_count for p in plans),
                    max(p.metrics.assigned_count for p in plans))
         if len(plans) > 1 else None,
@@ -158,12 +167,15 @@ def _fmt_row(cells: list[str], widths: list[int]) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="app.bench", description="Замер планирования по регионам и режимам")
     p.add_argument("--region", action="append", choices=list(REGIONS), help="по умолчанию все")
-    p.add_argument("--mode", action="append", dest="modes", choices=["baseline_fifo", "improved", "benchmark_ortools"],
+    p.add_argument("--mode", action="append", dest="modes",
+                   choices=["baseline_fifo", "improved", "benchmark_ortools", "ortools_office"],
                    help="по умолчанию все")
     p.add_argument("--repeats", type=int, default=3, help="прогонов на режим (медиана; для детерминированных 1)")
     p.add_argument("--time-limit", type=int, help="ortools_time_limit, сек")
     p.add_argument("--fixed-cost", type=int, help="ortools_fixed_vehicle_cost, мин")
     p.add_argument("--slack", type=int, help="ortools_slack_max, мин")
+    p.add_argument("--office-matrix", choices=["osrm", "haversine"],
+                   help="чем считать длины дуг в режиме «Контур» (по умолчанию из настроек)")
     p.add_argument("--first-solution", help="ortools_first_solution")
     p.add_argument("--local-search", help="ortools_local_search")
     p.add_argument("--norm", action="append", default=[], help='норматив: "Дозаказ=50"')
@@ -174,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
 
     applied = _apply_settings(args)
     regions = args.region or list(REGIONS)
-    modes = args.modes or ["baseline_fifo", "improved", "benchmark_ortools"]
+    modes = args.modes or ["baseline_fifo", "improved", "benchmark_ortools", "ortools_office"]
 
     print("настройки замера:", applied or "по умолчанию")
     if args.norm:
@@ -209,13 +221,21 @@ def main(argv: list[str] | None = None) -> int:
                   f"на {control.get('engineers_used', '?')} бригадах")
 
         for mode in modes:
-            repeats = args.repeats if mode == "benchmark_ortools" else 1
+            repeats = args.repeats if mode in ("benchmark_ortools", "ortools_office") else 1
             r = _median_runs(region, mode, reqs, engs, repeats)
             spread = f"{r['spread'][0]}-{r['spread'][1]}" if r["spread"] else ""
             print(_fmt_row([region, mode, str(int(r["assigned_med"])), str(int(r["unassigned"])),
                             str(int(r["engineers"])), f"{r['km']:.1f}", str(int(r["minutes"])), spread], widths))
+            # Чем посчитан план: у «Контура» дорожная матрица OSRM, и при недоступной
+            # сети он молча уходит на haversine. Без этой пометки строки замера
+            # нельзя сравнивать между прогонами — цифры относятся к разной модели.
+            if r["matrix"] and not args.compact:
+                note = ""
+                if r["matrix"] != get_settings().ortools_office_matrix:
+                    note = "  ← OSRM не ответил, откат на прямые (замер нельзя сравнивать с osrm)"
+                print(f"    матрица расстояний: {r['matrix']}{note}")
             summary.append({"region": region, "mode": mode, **{k: r[k] for k in
-                             ("assigned_med", "unassigned", "engineers", "km", "minutes", "assigned")},
+                             ("assigned_med", "unassigned", "engineers", "km", "minutes", "assigned", "matrix")},
                              "ceiling": ceil, "impossible": impossible, "control": control})
 
             if args.compact:

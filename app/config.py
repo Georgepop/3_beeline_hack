@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/app.db"
 
     # Логика (переключаются без правки кода: параметры запроса / /api/settings / env):
-    solver_mode: str = "improved"      # baseline_fifo | improved | benchmark_ortools
+    solver_mode: str = "improved"      # baseline_fifo | improved | benchmark_ortools | ortools_office
     dist_mode: str = "haversine"       # haversine | osrm
     geocoder: str = "nominatim"        # nominatim | districts
     region: str = "vostok"
@@ -44,6 +44,21 @@ class Settings(BaseSettings):
     # Стратегии поиска (имя поля в routing_enums_pb2, регистр не важен)
     ortools_first_solution: str = "parallel_cheapest_insertion"
     ortools_local_search: str = "guided_local_search"
+
+    # Режим «Контур» (ortools_office) — вариант OR-Tools с платным возвратом
+    # в офис. Первую стратегию и штрафы он задаёт свои, поэтому настройки выше
+    # к нему не применяются.
+    # Чем считать длины дуг: osrm — дорожная матрица (режим уходит в сеть и
+    # кэширует матрицу целиком), haversine — тот же, что у остальных режимов.
+    # Значение попадает в PlanResponse.matrix, чтобы по цифрам плана было видно,
+    # чем именно он посчитан.
+    ortools_office_matrix: str = "osrm"
+    # Штраф за простой: прибыл раньше окна и ждёшь — накапливается. Нужен, чтобы
+    # решатель предпочитал загруженный день ожиданию. 0 — выключить.
+    ortools_office_wait_penalty: int = 500
+    # Сколько точек OSRM table берёт в одну матрицу; на больших регионах (n выше
+    # этого числа) запросы идут блоками. На текущих данных хватает одного.
+    osrm_table_max_points: int = 100
 
     # Средние скорости по типу транспорта, км/ч (допущение, README).
     speed_kmh: dict[str, float] = {

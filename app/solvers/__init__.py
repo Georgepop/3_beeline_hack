@@ -9,6 +9,7 @@ SolverFn = Callable[[str, str, list[Request], list[Engineer]], PlanResponse]
 
 from app.solvers.fifo import solve_fifo
 from app.solvers.improved import solve_improved
+from app.solvers.ortools_office import solve_office
 from app.solvers.ortools_solver import is_available as ortools_available
 from app.solvers.ortools_solver import solve_ortools
 
@@ -16,7 +17,11 @@ _REGISTRY: dict[str, SolverFn] = {
     "baseline_fifo": solve_fifo,
     "improved": solve_improved,
     "benchmark_ortools": solve_ortools,
+    "ortools_office": solve_office,
 }
+
+# Режимы на OR-Tools: без пакета они недоступны, и API отдаёт по ним 503.
+_ORTOLOLS_MODES = ("benchmark_ortools", "ortools_office")
 
 
 def register(name: str, fn: SolverFn) -> None:
@@ -29,7 +34,7 @@ def get(name: str) -> SolverFn:
 
 def available(name: str) -> bool:
     """Режим считается доступным, если его реально можно посчитать (ortools — опционален)."""
-    if name == "benchmark_ortools":
+    if name in _ORTOLOLS_MODES:
         return ortools_available()
     return True
 

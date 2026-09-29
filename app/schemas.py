@@ -122,6 +122,10 @@ class PlanResponse(BaseModel):
     metrics: PlanMetrics = Field(default_factory=PlanMetrics)
     summary: Optional[PlanSummary] = None
     comparison: Comparison = Field(default_factory=Comparison)
+    # Чем посчитан план: "haversine" | "osrm". Заполняет только «Контур» (ortools_office),
+    # который берёт дорожную матрицу и при недоступной сети откатывается на haversine —
+    # без этой метки расхождение цифр между прогонами было бы нечем объяснить.
+    matrix: Optional[str] = None
 
 
 class ScenarioEvent(BaseModel):
@@ -278,7 +282,7 @@ class GeoReverseOut(BaseModel):
     lng: Optional[float] = None
 
 
-SolverMode = Literal["baseline_fifo", "improved", "benchmark_ortools"]
+SolverMode = Literal["baseline_fifo", "improved", "benchmark_ortools", "ortools_office"]
 DistMode = Literal["haversine", "osrm"]
 RegionId = Literal["vostok", "yugo_vostok", "yugocentr"]
 
