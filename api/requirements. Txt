@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pymongo
+pydantic
+numpy
+pandas
+ortools
+requests
+mapbox
